@@ -5,6 +5,8 @@ alwaysApply: true
 
 # Tool Catalog
 
+**BEFORE FIRST USE**: Run `python verify_install.py` from the repo root. Do NOT proceed with any tool until every check passes. Common failures: missing `git lfs pull` (LFS pointer stubs instead of binaries), missing `pip install -r requirements.txt`, or no Python venv activated.
+
 All tools work on PE binaries (`.exe` and `.dll`). `$B` = path to binary, `$VA` = hex address, `$D` = path to minidump `.dmp` file. Check tools help command for more info on usage.
 Always consult this catalog before making any move to take the best decision on what to use with best bang for your buck.
 
@@ -38,15 +40,30 @@ IMPORTANT: Collecting MORE INFORMATION per command run is encouraged over minor 
 | `readmem.py $B $VA $TYPE` | Read typed data (float, uint32, ptr, bytes...) | `readmem.py binary.exe 0x401000 float` |
 | `asi_patcher.py build` | Generate .asi DLL patch from JSON spec | `asi_patcher.py build spec.json --vcvarsall ...` |
 
-## Minidump Analysis (`retools/dumpinfo.py`) -- crash dump files
+## Crash Dump Analysis
+
+### Throw-Site Mapper (`retools/throwmap.py`) -- static analysis of MSVC C++ throws
 
 | Tool | Purpose | Example |
 |------|---------|---------|
-| `dumpinfo.py $D info` | Crash dump overview: modules, exception summary | `dumpinfo.py crash.dmp info` |
-| `dumpinfo.py $D threads` | All threads with registers resolved to module+offset | `dumpinfo.py crash.dmp threads` |
-| `dumpinfo.py $D stack $TID` | Stack walk: return addresses, annotated values | `dumpinfo.py crash.dmp stack 67900` |
+| `throwmap.py $B list` | Map all `_CxxThrowException` call sites to their error strings | `throwmap.py d3d9.dll list` |
+| `throwmap.py $B match --dump $D` | **Deterministic crash diagnosis**: match dump stack against throw map | `throwmap.py d3d9.dll match --dump crash.dmp` |
+
+### Minidump Inspector (`retools/dumpinfo.py`) -- `.dmp` file analysis
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `dumpinfo.py $D diagnose [--binary $B]` | **One-shot crash analysis**: exception + threads + stack scan + throw match | `dumpinfo.py crash.dmp diagnose --binary d3d9.dll` |
 | `dumpinfo.py $D exception` | Exception record, MSVC C++ type name decoding | `dumpinfo.py crash.dmp exception` |
+| `dumpinfo.py $D threads` | All threads summary (one line each, exception thread marked) | `dumpinfo.py crash.dmp threads` |
+| `dumpinfo.py $D threads -v` | Full register dump per thread | `dumpinfo.py crash.dmp threads -v` |
+| `dumpinfo.py $D stack $TID` | Stack walk: return addresses, annotated values | `dumpinfo.py crash.dmp stack 67900 --depth 512` |
+| `dumpinfo.py $D stackscan $TID` | Scan full stack for code addresses, grouped by module | `dumpinfo.py crash.dmp stackscan 67900 --module d3d9.dll` |
+| `dumpinfo.py $D memmap` | List all captured memory regions with sizes and module affiliation | `dumpinfo.py crash.dmp memmap` |
+| `dumpinfo.py $D strings` | Extract readable strings from dump memory | `dumpinfo.py crash.dmp strings --pattern "error\|fail"` |
+| `dumpinfo.py $D memscan $PAT` | Search dump memory for byte pattern or text | `dumpinfo.py crash.dmp memscan "44 78 76 6B"` |
 | `dumpinfo.py $D read $VA $T` | Read typed data from dump memory | `dumpinfo.py crash.dmp read 0x7FFE0030 uint64` |
+| `dumpinfo.py $D info` | Module list with exception summary | `dumpinfo.py crash.dmp info` |
 
 ## Dynamic Analysis (`livetools/`) -- Frida-based, attaches to running process
 
@@ -93,9 +110,15 @@ python -m livetools status              # check connection
 - "Find all instructions using a specific constant" → `search.py insn`
 - "Find a mov-immediate near a struct field access" → `search.py insn --near`
 - "Find a known byte sequence" → `search.py pattern`
-- "What crashed and why?" → `dumpinfo.py exception`
+- **"What crashed and what was the error message?"** → `dumpinfo.py diagnose --binary <dll>` (one-shot: exception + stack scan + throw-site match)
+- "What C++ exception type was thrown?" → `dumpinfo.py exception`
+- "Which module has frames on the crash stack?" → `dumpinfo.py stackscan <tid> --module <name>`
+- "Map all throw sites to error strings in a DLL" → `throwmap.py <dll> list`
+- "Match a specific dump against throw sites" → `throwmap.py <dll> match --dump <dmp>`
 - "Where is each thread stuck?" → `dumpinfo.py threads`
-- "Walk a crashing thread's call stack" → `dumpinfo.py stack`
+- "Walk a crashing thread's call stack" → `dumpinfo.py stack <tid>`
+- "Is a specific string in the dump memory?" → `dumpinfo.py memscan <pattern>` or `strings --pattern`
+- "What memory regions are captured in the dump?" → `dumpinfo.py memmap`
 - "Is this function reached at runtime?" → `livetools trace` or `collect`
 - "What are the actual register values?" → `livetools trace --read` or `bp` + `regs`
 - "How many draw calls happen?" → `livetools dipcnt`
@@ -123,6 +146,27 @@ Works exclusively with **MSVC-compiled** binaries that have RTTI enabled (`/GR`,
 **`throwinfo` input differs by bitness:**
 - 64-bit: pass the RVA from the exception record (minidump param[2] minus param[3])
 - 32-bit: pass the absolute VA directly (minidump param[2])
+
+### `throwmap.py` -- MSVC C++ exceptions only
+
+Maps `_CxxThrowException` call sites to their string arguments by static analysis of the PE's code sections. Works on both 32-bit and 64-bit MSVC-compiled binaries.
+
+**`match` requires the original binary**: the PE file passed to `throwmap.py` must be the exact version that was loaded when the crash dump was captured. If the binary was rebuilt or updated since the crash, the throw-site RVAs won't match. Check file timestamps and hashes.
+
+**How it works** (deterministic, zero bias):
+1. Finds IAT slot for `_CxxThrowException`, then all `CALL`/`JMP` thunks to it
+2. Walks backward from each call site to find LEA/PUSH loading the string argument
+3. In `match` mode, scans the crashing thread's stack for return addresses (call_rva + insn_size)
+4. Reports exact matches -- no heuristics, no keyword filtering
+
+**Will not work for**: non-MSVC binaries, custom exception mechanisms, binaries that don't import `_CxxThrowException`, or dumps where the crashing thread's stack memory wasn't captured.
+
+### `dumpinfo.py` -- minidump completeness
+
+Minidumps vary in how much data they capture depending on `MiniDumpWriteDump` flags. Common limitations:
+- **Heap data missing**: the thrown object's `std::string` may point to heap memory not in the dump. `diagnose` reports this and falls back to `throwmap` matching.
+- **Stack truncated**: small dumps may not capture enough stack depth. Use `memmap` to see what's actually available.
+- **`stackscan` shows data AND code pointers**: not every value on the stack is a return address. Values at `+0x0` are likely the module base (data), not code. Use `throwmap match` for definitive call-site identification.
 
 ### `funcinfo.py` -- call-target heuristic
 
