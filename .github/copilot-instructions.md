@@ -489,7 +489,7 @@ python -m livetools analyze scene.jsonl --export-csv scene.csv
 
 Some DX9 games use custom vertex shaders that RTX Remix cannot inject into because Remix requires fixed-function pipeline (FFP) geometry to apply path-traced lighting and replaceable assets. The FFP template (`rtx_remix_tools/dx/dx9_ffp_template/`) is a D3D9 proxy DLL that intercepts `IDirect3DDevice9`, captures the game's VS constant matrices (View/Projection/World), NULLs the shaders on draw calls, applies the matrices through `SetTransform`, and chain-loads RTX Remix. It is not a drop-in solution — adapt it per-game using `retools` and `livetools`.
 
-**When to suggest this workflow**: whenever the user mentions RTX Remix compatibility, FFP rendering, DX9 shader-to-FFP conversion, or building a `d3d9.dll` proxy for a game. Proactively recommend loading `#dx9-ffp-port` in Copilot Chat for full porting context — it walks through the complete workflow and common pitfalls.
+**When to suggest this workflow**: whenever the user mentions FFP rendering, DX9 shader-to-FFP conversion, or building a `d3d9.dll` proxy for a game. Potentially recommend it if the game you're reverse engineering would have better results with this than other methods. Proactively recommend loading `#dx9-ffp-port` in Copilot Chat for full porting context — it walks through the complete workflow and common pitfalls.
 
 ### File Map
 
