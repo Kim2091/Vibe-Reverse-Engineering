@@ -1,6 +1,8 @@
 # DX9 FFP Proxy — Game Porting Prompt
 
-You are helping a user port a DX9 shader-based game to the fixed-function pipeline using the `patches/dx9_ffp_template/` template in this workspace. The goal is RTX Remix compatibility: Remix requires FFP geometry to inject path-traced lighting and replaceable assets. Also use the Vibe RE tools (retools, livetools) for static and dynamic analysis to assist with developing this wrapper. They are meant to be used together.
+You are helping a user port a DX9 shader-based game to the fixed-function pipeline using the `rtx_remix_tools/dx/dx9_ffp_template/` template in this workspace. The goal is RTX Remix compatibility: Remix requires FFP geometry to inject path-traced lighting and replaceable assets. Also use the Vibe RE tools (retools, livetools) for static and dynamic analysis to assist with developing this wrapper. They are meant to be used together.
+
+**SKINNING IS OFF BY DEFAULT.** Do NOT enable `ENABLE_SKINNING`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. Until then, treat skinning as non-existent. When the user does request it, read `extensions/skinning/README.md` and `proxy/d3d9_skinning.h` for the full guide.
 
 ---
 
@@ -26,9 +28,11 @@ The template is a d3d9.dll proxy that intercepts `IDirect3DDevice9` and:
 | `proxy/d3d9_main.c` | DLL entry, logging, Remix chain loading, INI parsing |
 | `proxy/d3d9_wrapper.c` | Wrapped `IDirect3D9` (17 methods), intercepts `CreateDevice` |
 | `proxy/d3d9_device.c` | Wrapped `IDirect3DDevice9` (119 methods) — **core FFP conversion** |
+| `proxy/d3d9_skinning.h` | Skinning extension (included only when `ENABLE_SKINNING=1`) |
 | `proxy/build.bat` | MSVC x86 no-CRT build (auto-finds VS via vswhere) |
 | `proxy/d3d9.def` | Exports `Direct3DCreate9` |
 | `proxy/proxy.ini` | Runtime config: `[Remix]` chain load, `[FFP]` AlbedoStage |
+| `extensions/skinning/README.md` | Guide for enabling skinning (late-stage) |
 
 The codebase is plain C, no CRT, links only `kernel32.lib`. Uses `__declspec(naked)` relay thunks for the ~104 non-intercepted methods.
 
@@ -43,9 +47,11 @@ The top of `d3d9_device.c` has a `GAME-SPECIFIC` section with `#define`s that mu
 #define VS_REG_PROJ_END         8
 #define VS_REG_WORLD_START     16   // First register of world matrix
 #define VS_REG_WORLD_END       20
+// Bone defines below only matter when ENABLE_SKINNING=1 (off by default)
 #define VS_REG_BONE_THRESHOLD  20   // Registers at/beyond this are bone candidates
 #define VS_REGS_PER_BONE        3   // Registers per bone (3 = packed 4x3)
-#define VS_BONE_MIN_REGS        9   // Minimum register count for bone detection
+#define VS_BONE_MIN_REGS        3   // Minimum register count for bone detection (1 bone)
+#define ENABLE_SKINNING         0   // Late-stage: set to 1 only after rigid FFP works
 ```
 
 Beyond the defines, users may need to modify:
@@ -99,7 +105,7 @@ This captures: device ptr, startRegister, registerCount, and the actual float da
 
 ### Step 3: Copy Template and Update Defines
 
-1. Copy `patches/dx9_ffp_template/` to `patches/<GameName>/`
+1. Copy `rtx_remix_tools/dx/dx9_ffp_template/` to `patches/<GameName>/`
 2. Update the `GAME-SPECIFIC` section in `proxy/d3d9_device.c` with discovered register values
 3. Update `kb.h` with any function signatures, structs, or globals discovered
 
@@ -125,11 +131,79 @@ Use this to iterate: wrong matrices → re-check register mapping. Missing textu
 
 ## Architecture Details for Editing
 
-- **FFP_Engage / FFP_Disengage**: These track whether the proxy is in FFP mode. `FFP_Engage` NULLs shaders, applies transforms, sets up texture stages. `FFP_Disengage` restores the game's shaders. The proxy avoids redundant state changes between consecutive FFP draw calls.
-- **FFP_Setup**: Called once per FFP engagement. Configures texture stages (stage 0 = MODULATE texture×diffuse), disables lighting, sets white material, disables fog. Modify this if the game needs different FFP state.
-- **FFP_ApplyTransforms**: Reads from the `vsConst[]` array using the `VS_REG_*` defines and calls `SetTransform` with transposed matrices (D3D9 FFP expects row-major).
-- **Relay thunks**: The 104 non-intercepted methods use `__declspec(naked)` ASM to swap `this` and jump directly to the real vtable. Zero overhead. Don't touch these unless you need to intercept a new method.
-- **Skinning (ENABLE_SKINNING=1)**: When a vertex declaration has BLENDWEIGHT + BLENDINDICES, the proxy detects it as skinned and captures per-element byte offsets and types into `WrappedDevice`. On `DrawIndexedPrimitive`, `SkinVB_GetExpanded` expands the source vertices to a fixed 48-byte layout (FLOAT3 pos + FLOAT3 weights + UBYTE4 indices + FLOAT3 normal + FLOAT2 uv), decoding compressed formats (SHORT4N normals, FLOAT16_2 UVs). The expanded buffer is hash-keyed and cached (up to 64 slots). `FFP_UploadBones` then uploads bone matrices via `SetTransform(WORLDMATRIX(i))` and sets `D3DRS_VERTEXBLEND`. A shared `skinExpDecl` (IDirect3DVertexDeclaration9) is created at device-creation time. When `ENABLE_SKINNING=0`, skinned meshes pass through with original shaders.
+### Code Map: Edit vs Do-Not-Touch
+
+The core file `proxy/d3d9_device.c` (~1660 lines) has clear zones. **Only edit sections marked YES or MAYBE:**
+
+| Section | Approx Lines | Edit Per-Game? |
+|---------|-------------|----------------|
+| `VS_REG_*` and `ENABLE_SKINNING` defines | 29–53 | **YES** — set register layout (skinning OFF by default) |
+| D3D9 constants, enums, vtable slot indices | 54–257 | NO — fixed D3D9 API values |
+| `WrappedDevice` struct | 258–337 | NO — internal state bookkeeping |
+| Shader addref/release helpers | 338–366 | NO — COM ref counting |
+| `FFP_SetupLighting`, `FFP_SetupTextureStages`, `FFP_ApplyTransforms` | 367–486 | MAYBE — tweak if game needs different FFP state |
+| `#include "d3d9_skinning.h"` (conditional) | 477–481 | NO — included only when ENABLE_SKINNING=1 |
+| `FFP_Engage` / `FFP_Disengage` | 487–559 | NO — enter/leave FFP mode |
+| IUnknown + relay thunks | 560–683 | NO — naked ASM forwarding, never edit |
+| `WD_Reset` / `WD_Present` / `WD_BeginScene` / `WD_EndScene` | 684–780 | NO — frame/scene lifecycle |
+| `WD_DrawPrimitive` | 781–824 | **YES** — draw routing for non-indexed draws |
+| `WD_DrawIndexedPrimitive` | 825–993 | **YES** — main draw routing (see decision tree below) |
+| `WD_SetVertexShaderConstantF` | 995–1085 | MAYBE — dirty tracking uses `VS_REG_*` |
+| `WD_SetVertexDeclaration` | 1134–1293 | MAYBE — element parsing; add extra usages if needed |
+| `WrappedDevice_Create` + vtable wiring | 1297–1476 | NO — initialization |
+
+### DrawIndexedPrimitive Decision Tree
+
+This is the routing logic that determines which draws get FFP-converted vs passed through with shaders:
+
+```
+viewProjValid?
+├─ NO  → shader passthrough (transforms not captured yet)
+└─ YES
+    ├─ curDeclIsSkinned?
+    │   ├─ YES + ENABLE_SKINNING=1
+    │   │   ├─ skinExpDecl exists + expansion succeeds?
+    │   │   │   ├─ YES → FFP_Engage + FFP_UploadBones + draw expanded VB
+    │   │   │   └─ NO  → shader passthrough (fallback)
+    │   │   └─ (never reached if ENABLE_SKINNING=1)
+    │   └─ YES + ENABLE_SKINNING=0 → shader passthrough
+    └─ NOT skinned
+        ├─ !curDeclHasNormal → shader passthrough (HUD/UI)
+        └─ hasNormal → FFP_Engage + rigid FFP draw
+```
+
+**Common per-game changes to this tree:**
+- Game's world geometry omits NORMAL → remove or change the `!curDeclHasNormal` filter
+- Game has special passes (shadow, reflection) → filter by shader pointer, render target, or vertex count
+- Game draws UI with DrawIndexedPrimitive + NORMAL → add a filter (e.g. check stride or texture)
+
+### DrawPrimitive Decision Tree
+
+```
+viewProjValid AND lastDecl AND !curDeclHasPosT AND !curDeclIsSkinned?
+├─ YES → FFP_Engage (world-space particles, non-indexed geometry)
+└─ NO  → shader passthrough (screen-space UI, POSITIONT, no decl, skinned)
+```
+
+### Skinning Data Flow
+
+When `ENABLE_SKINNING=1`, skinned meshes flow through these stages:
+
+1. **`WD_SetVertexDeclaration`** — Parses `D3DVERTEXELEMENT9` array. If both BLENDWEIGHT and BLENDINDICES are present, sets `curDeclIsSkinned=1` and captures per-element byte offsets: `curDeclPosOff`, `curDeclBlendWeightOff`, `curDeclBlendIndicesOff`, `curDeclNormalOff`, `curDeclTexcoordOff` and their types. Also infers `curDeclNumWeights` from the BLENDWEIGHT element type.
+
+2. **`WD_SetVertexShaderConstantF`** — When a write hits registers ≥ `VS_REG_BONE_THRESHOLD` with count ≥ `VS_BONE_MIN_REGS` and divisible by `VS_REGS_PER_BONE`, stores `boneStartReg` and `numBones`.
+
+3. **`WD_DrawIndexedPrimitive`** — Sees `curDeclIsSkinned=1`, calls `SkinVB_GetExpanded()` which:
+   - Locks the game's source vertex buffer
+   - Calls `expand_skin_vertex()` per vertex → decodes compressed normals/UVs, writes fixed 48-byte layout
+   - Caches the result by hash key (source VB ptr + baseVtx + count + stride + decl ptr)
+   - On cache hit, returns the previously expanded buffer (no re-expansion)
+
+4. **`FFP_UploadBones`** — Reads bone matrices from `vsConst[]` starting at `boneStartReg`, transposes each 4×3 → 4×4, uploads via `SetTransform(WORLDMATRIX(i))`. Sets `D3DRS_VERTEXBLEND` and `D3DRS_INDEXEDVERTEXBLENDENABLE`. Marks `worldDirty=1` (bone[0] clobbers WORLDMATRIX(0)).
+
+5. **Draw** — The expanded VB + shared `skinExpDecl` are bound, draw executes with FFP indexed vertex blending. After the draw, original VB/decl/textures are restored.
+
+All of this is infrastructure (no per-game edits). The only game-specific parts are the `VS_REG_BONE_*` defines and `ENABLE_SKINNING` toggle.
 
 ## Common Pitfalls
 
