@@ -1,0 +1,19 @@
+---
+description: Create git-backed checkpoints before substantial edits
+alwaysApply: true
+---
+
+# Git Checkpoints
+
+Before any substantial edit, refactor, or experiment, create a named checkpoint with:
+
+`python checkpoint.py save "<short description>"`
+
+Use short, task-specific names such as `before-matrix-remap` or `pre-hook-refactor`.
+
+When the user wants to revisit an earlier project state:
+
+- Run `python checkpoint.py list` to find the checkpoint.
+- Run `python checkpoint.py restore "<name or id>"` to open that state on its own branch.
+
+Treat checkpoints as the repo's local time-travel layer. Use them before risky edits even if the user does not explicitly remind you.

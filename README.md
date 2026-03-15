@@ -8,7 +8,7 @@ No reverse engineering experience required -- just good prompting. Although some
 
 - A supported IDE:
   - [Cursor IDE](https://cursor.sh)
-    
+
     OR
   - [VSCode](https://code.visualstudio.com/) + [Copilot](https://github.com/features/copilot)
 - Python 3.10+
@@ -39,6 +39,20 @@ Start a new chat in Cursor, point it at the target binary, and describe what you
 > Disable frustum culling in "D:/Games/MyGame/AwesomeGame.exe" -- I'm modding raytracing and need geometry to render behind the camera for reflections/mirrors.
 
 Be descriptive about the feature or bug, the expected behavior, and your goal. The agent will plan and execute from there.
+
+## Local Checkpoints
+
+Use `checkpoint.py` to save and revisit local working states without turning them into normal project commits:
+
+```bash
+python checkpoint.py save "before matrix remap"
+python checkpoint.py list
+python checkpoint.py restore "before matrix remap"
+```
+
+Checkpoints snapshot the current repo state, including untracked files, into local git refs under `refs/checkpoints/`. Restore first autosaves the current state if needed, then opens the target checkpoint on its own branch so you can bounce around safely.
+
+Ignored files are excluded. If a generated file should stay out of checkpoints, add it to `.gitignore`.
 
 ## Important
 
