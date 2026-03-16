@@ -623,7 +623,7 @@ The goal is to answer three questions. The tools and approaches below are illust
 - **Verification**: `dx9tracer analyze --const-provenance-draw N` — see actual matrix values and which seq# set them
 - Script output gives candidate call sites; `decompiler.py` on those sites can reveal register ranges and data sources
 - If scripts miss call sites, `xrefs.py` on the `SetVertexShaderConstantF` IAT slot finds the rest
-- `livetools trace` reading `[esp+4]:4:uint32; [esp+8]:4:uint32; [esp+c]:64:float32` (startReg, count, data) can confirm live values
+- `livetools trace` reading `[esp+8]:4:uint32; [esp+10]:4:uint32; *[esp+c]:64:float32` (startReg, Vector4fCount, data via pointer deref) can confirm live values
 - If the game uses an indirection layer, `callgraph.py --up` from the call site can expose the real dispatch path
 
 **2. What vertex formats are used, and is there skinning?**

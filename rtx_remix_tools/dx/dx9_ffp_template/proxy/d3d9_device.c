@@ -1,39 +1,9 @@
 /*
- * Wrapped IDirect3DDevice9 - FFP conversion layer.
+ * Wrapped IDirect3DDevice9 — FFP conversion layer for RTX Remix.
  *
- * This is the core of the shader-to-fixed-function conversion proxy.
- * It intercepts shader-related D3D9 calls and replaces them with
- * fixed-function pipeline equivalents for RTX Remix compatibility.
- *
- * IDirect3DDevice9 has 119 methods (including IUnknown).
- * We intercept ~15 methods; the rest relay to the real device via
- * naked ASM thunks (zero overhead, no extra stack frames).
- *
- * Intercepted methods:
- *   - SetVertexShader / SetPixelShader: cache shader pointers
- *   - SetVertexShaderConstantF / SetPixelShaderConstantF: capture constants
- *   - DrawIndexedPrimitive: FFP conversion (NULL shaders, apply transforms)
- *   - DrawPrimitive: pass through with shaders (particles/UI)
- *   - SetVertexDeclaration: parse vertex elements, detect skinning
- *   - SetTexture / SetStreamSource: track state
- *   - BeginScene / EndScene / Present / Reset: frame lifecycle
- *
- * =====================================================================
- * HOW TO ADAPT THIS FOR YOUR GAME:
- *
- * 1. Run the analysis scripts against your game binary to discover:
- *    - VS constant register layout (which regs = View/Proj/World/Bones)
- *    - Vertex declaration formats
- *    - Which texture stage holds the albedo
- *
- * 2. Update the GAME-SPECIFIC #defines below with discovered values
- *
- * 3. Adjust draw call routing in WD_DrawIndexedPrimitive if needed
- *    (some games need different FFP bypass logic for skinned meshes,
- *    particles, UI, or multi-pass rendering)
- *
- * 4. Build with build.bat, deploy d3d9.dll + proxy.ini to game dir
- * =====================================================================
+ * Intercepts ~15 of 119 device methods; the rest relay via naked ASM thunks.
+ * Sections marked GAME-SPECIFIC need per-game updates.
+ * See the dx9-ffp-port prompt and extensions/skinning/README.md for full docs.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -80,30 +50,13 @@ extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 #define VS_REG_WORLD_START     16   /* First register of 4x4 world matrix */
 #define VS_REG_WORLD_END       20   /* One past last world register */
 
-/* Bone palette detection: writes of >= BONE_MIN_REGS registers starting
- * at or beyond BONE_THRESHOLD, with count divisible by REGS_PER_BONE,
- * are treated as bone matrix uploads. */
+/* Bone palette detection (only matters when ENABLE_SKINNING=1) */
 #define VS_REG_BONE_THRESHOLD  20   /* Writes at this register+ may be bones */
 #define VS_REGS_PER_BONE        3   /* Registers per bone (3 = 4x3 packed) */
-#define VS_BONE_MIN_REGS        9   /* Minimum registers to trigger detection (3 bones) */
+#define VS_BONE_MIN_REGS        3   /* Minimum registers to trigger detection (1 bone) */
 
-/* ============================================================
- * GAME-SPECIFIC: Skinning
- *
- * Set ENABLE_SKINNING to 1 to include FFP indexed vertex blending
- * code. This allows the proxy to convert skinned meshes to FFP.
- *
- * Caveats:
- *   - FFP indexed vertex blending supports max ~48 bones
- *   - Driver support varies (some GPUs limit to fewer bones)
- *   - Compressed vertex formats (SHORT4N normals) won't work in FFP
- *   - Most Remix workflows pass skinned meshes through with shaders
- *
- * The default behavior (even with ENABLE_SKINNING=1) is to pass
- * skinned meshes through with their original shaders. To actually
- * convert skinned draws to FFP, modify WD_DrawIndexedPrimitive.
- * ============================================================ */
-#define ENABLE_SKINNING 1
+/* GAME-SPECIFIC: Skinning — off by default. See extensions/skinning/README.md */
+#define ENABLE_SKINNING 0
 
 /* ---- Diagnostic logging ---- */
 #define DIAG_LOG_FRAMES 3
@@ -171,10 +124,26 @@ extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 #define D3DDECLUSAGE_NORMAL       3
 #define D3DDECLUSAGE_TEXCOORD     5
 #define D3DDECLUSAGE_COLOR        10
+#define D3DDECLUSAGE_POSITIONT    9   /* pre-transformed screen-space coords — skips FFP transform */
 
 #define MAX_FFP_BONES 48
 
+#define D3DDECLTYPE_FLOAT1    0
+#define D3DDECLTYPE_FLOAT2    1
 #define D3DDECLTYPE_FLOAT3    2
+#define D3DDECLTYPE_FLOAT4    3
+#define D3DDECLTYPE_UBYTE4    5
+#define D3DDECLTYPE_UBYTE4N   8
+#define D3DDECLTYPE_SHORT4N   10
+#define D3DDECLTYPE_UDEC3     13
+#define D3DDECLTYPE_DEC3N     14
+#define D3DDECLTYPE_FLOAT16_2 15
+
+#if ENABLE_SKINNING
+/* Expanded skinned vertex layout: FLOAT3 pos + FLOAT3 weights + UBYTE4 idx + FLOAT3 normal + FLOAT2 uv */
+#define SKIN_VTX_SIZE   48
+#define SKIN_CACHE_SIZE 64
+#endif
 
 /* ---- Device vtable slot indices ---- */
 enum {
@@ -320,26 +289,39 @@ typedef struct WrappedDevice {
     int viewProjValid;      /* set once both View and Proj register ranges have been written */
     int ffpActive;          /* real device currently has NULL shaders (FFP mode) */
 
+    void *lastDecl;         /* current IDirect3DVertexDeclaration9* */
+    int curDeclIsSkinned;   /* 1 if current decl has BLENDWEIGHT+BLENDINDICES */
+
 #if ENABLE_SKINNING
-    /* Skinning detection */
-    void *lastDecl;
-    int curDeclIsSkinned;
-    int curDeclNumWeights;
-    int boneStartReg;
-    int numBones;
-    int skinningSetup;
-    int lastVsConstWriteEnd;
-#else
-    void *lastDecl;
-    int curDeclIsSkinned;
+    int curDeclNumWeights;  /* number of blend weights (1-3) */
+    int boneStartReg;       /* VS constant register where bone matrices start */
+    int numBones;           /* number of bones detected from constant writes */
+    int skinningSetup;      /* whether FFP skinning state has been configured */
+
+    /* Per-element offsets/types for skinned vertex expansion */
+    int curDeclNormalOff;       /* byte offset of NORMAL in source vertex */
+    int curDeclNormalType;      /* D3DDECLTYPE of NORMAL, or -1 if none */
+    int curDeclBlendWeightOff;  /* byte offset of BLENDWEIGHT in source vertex */
+    int curDeclBlendWeightType; /* D3DDECLTYPE of BLENDWEIGHT element */
+    int curDeclBlendIndicesOff; /* byte offset of BLENDINDICES in source vertex */
+    int curDeclPosOff;          /* byte offset of POSITION in source vertex */
+
+    /* Skinned vertex expansion cache */
+    void        *skinExpVB[SKIN_CACHE_SIZE];   /* cached expanded IDirect3DVertexBuffer9* */
+    unsigned int skinExpKey[SKIN_CACHE_SIZE];   /* hash key per slot */
+    unsigned int skinExpNv[SKIN_CACHE_SIZE];    /* vertex count per slot */
+    void        *skinExpDecl;                  /* IDirect3DVertexDeclaration9* for expanded layout */
 #endif
 
     /* Vertex element tracking */
     int curDeclHasTexcoord;
     int curDeclHasNormal;
     int curDeclHasColor;
-    int curDeclNumElems;
-    unsigned char curDeclElems[8 * 20];
+    int curDeclHasPosT;     /* 1 if current decl has POSITIONT (screen-space, skips FFP transform) */
+
+    /* Texcoord format for diagnostics and skinned vertex expansion */
+    int curDeclTexcoordType; /* D3DDECLTYPE of TEXCOORD[0], or -1 if none */
+    int curDeclTexcoordOff;  /* byte offset of TEXCOORD[0] in vertex */
 
     /* Texture tracking (stages 0-7) */
     void *curTexture[8];
@@ -435,8 +417,16 @@ static void FFP_SetupTextureStages(WrappedDevice *self) {
     ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, 0, D3DTSS_TEXCOORDINDEX, 0);
     ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, 0, D3DTSS_TEXTURETRANSFORMFLAGS, 0);
 
-    ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, 1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, 1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+    /* Disable stages 1-7: the game binds shadow maps, LUTs, normal maps etc.
+     * on higher stages for its pixel shaders. In FFP mode those stages become
+     * active and Remix may consume the wrong textures. */
+    {
+        int s;
+        for (s = 1; s <= 7; s++) {
+            ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, s, D3DTSS_COLOROP, D3DTOP_DISABLE);
+            ((FN_SetTSS)vt[SLOT_SetTextureStageState])(self->pReal, s, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+        }
+    }
 }
 
 /* Transpose a 4x4 matrix (column-major -> row-major or vice versa) */
@@ -445,6 +435,20 @@ static void mat4_transpose(float *dst, const float *src) {
     dst[4]  = src[1];  dst[5]  = src[5];  dst[6]  = src[9];  dst[7]  = src[13];
     dst[8]  = src[2];  dst[9]  = src[6];  dst[10] = src[10]; dst[11] = src[14];
     dst[12] = src[3];  dst[13] = src[7];  dst[14] = src[11]; dst[15] = src[15];
+}
+
+/* Returns true if a 4x4 matrix is non-zero and non-identity (worth logging) */
+static int mat4_is_interesting(const float *m) {
+    int all_zero = 1, i;
+    for (i = 0; i < 16; i++) {
+        if (m[i] != 0.0f) { all_zero = 0; break; }
+    }
+    if (all_zero) return 0;
+    if (m[0]==1.0f && m[1]==0.0f && m[2]==0.0f  && m[3]==0.0f &&
+        m[4]==0.0f && m[5]==1.0f && m[6]==0.0f  && m[7]==0.0f &&
+        m[8]==0.0f && m[9]==0.0f && m[10]==1.0f && m[11]==0.0f &&
+        m[12]==0.0f && m[13]==0.0f && m[14]==0.0f && m[15]==1.0f) return 0;
+    return 1;
 }
 
 /* Log a 4x4 matrix row by row (for diagnostics) */
@@ -488,60 +492,8 @@ static void FFP_ApplyTransforms(WrappedDevice *self) {
 }
 
 #if ENABLE_SKINNING
-/*
- * Upload bone matrices for FFP indexed vertex blending.
- *
- * Each bone occupies VS_REGS_PER_BONE consecutive vec4 registers
- * (typically 3 = 4x3 matrix, rows 0-2; row 3 = implicit 0,0,0,1).
- * Uploaded as D3DTS_WORLDMATRIX(n) for FFP indexed vertex blending.
- */
-static void FFP_UploadBones(WrappedDevice *self) {
-    typedef int (__stdcall *FN_SetTransform)(void*, unsigned int, float*);
-    typedef int (__stdcall *FN_SetRS)(void*, unsigned int, unsigned int);
-    void **vt = RealVtbl(self);
-    int startReg, numBones, i;
-    float boneMat[16];
-
-    startReg = self->boneStartReg;
-    if (startReg < (int)VS_REG_BONE_THRESHOLD) return;
-
-    numBones = self->numBones;
-    if (numBones <= 0) return;
-    if (numBones > MAX_FFP_BONES) numBones = MAX_FFP_BONES;
-
-    ((FN_SetRS)vt[SLOT_SetRenderState])(self->pReal, D3DRS_INDEXEDVERTEXBLENDENABLE, 1);
-    ((FN_SetRS)vt[SLOT_SetRenderState])(self->pReal, D3DRS_VERTEXBLEND,
-        self->curDeclNumWeights == 1 ? D3DVBF_1WEIGHTS :
-        self->curDeclNumWeights == 2 ? D3DVBF_2WEIGHTS : D3DVBF_3WEIGHTS);
-
-    for (i = 0; i < numBones; i++) {
-        int base = (startReg + i * VS_REGS_PER_BONE) * 4;
-        float *src = &self->vsConst[base];
-
-        /* Build 4x4 from 4x3 packed (transpose column->row major) */
-        boneMat[0]  = src[0];  boneMat[1]  = src[4];  boneMat[2]  = src[8];   boneMat[3]  = 0.0f;
-        boneMat[4]  = src[1];  boneMat[5]  = src[5];  boneMat[6]  = src[9];   boneMat[7]  = 0.0f;
-        boneMat[8]  = src[2];  boneMat[9]  = src[6];  boneMat[10] = src[10];  boneMat[11] = 0.0f;
-        boneMat[12] = src[3];  boneMat[13] = src[7];  boneMat[14] = src[11];  boneMat[15] = 1.0f;
-
-        ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal,
-            D3DTS_WORLDMATRIX(i), boneMat);
-    }
-
-    self->skinningSetup = 1;
-}
-
-static void FFP_DisableSkinning(WrappedDevice *self) {
-    typedef int (__stdcall *FN_SetRS)(void*, unsigned int, unsigned int);
-    void **vt = RealVtbl(self);
-
-    if (self->skinningSetup) {
-        ((FN_SetRS)vt[SLOT_SetRenderState])(self->pReal, D3DRS_INDEXEDVERTEXBLENDENABLE, 0);
-        ((FN_SetRS)vt[SLOT_SetRenderState])(self->pReal, D3DRS_VERTEXBLEND, D3DVBF_DISABLE);
-        self->skinningSetup = 0;
-    }
-}
-#endif /* ENABLE_SKINNING */
+#include "d3d9_skinning.h"
+#endif
 
 /*
  * Enter FFP mode: NULL both shaders on the real device, apply transforms,
@@ -613,6 +565,9 @@ static unsigned long __stdcall WD_Release(WrappedDevice *self) {
         shader_release(self->lastPS);
         self->lastVS = NULL;
         self->lastPS = NULL;
+#if ENABLE_SKINNING
+        Skin_ReleaseDevice(self);
+#endif
         HeapFree(GetProcessHeap(), 0, self);
     }
     return rc;
@@ -758,6 +713,9 @@ static int __stdcall WD_Reset(WrappedDevice *self, void *pPresentParams) {
     self->viewProjDirty = 0;
     self->psConstDirty = 0;
     self->ffpActive = 0;
+#if ENABLE_SKINNING
+    SkinVB_ReleaseCache(self);
+#endif
 
     hr = ((FN)RealVtbl(self)[SLOT_Reset])(self->pReal, pPresentParams);
     log_hex("  Reset hr=", hr);
@@ -835,23 +793,37 @@ static int __stdcall WD_EndScene(WrappedDevice *self) {
     return ((FN)RealVtbl(self)[SLOT_EndScene])(self->pReal);
 }
 
-/*
- * 81: DrawPrimitive
- *
- * GAME-SPECIFIC: In many engines, DrawPrimitive is used for particles,
- * UI, and other elements that need shader-based rendering. The default
- * behavior is to disengage FFP and pass through with original shaders.
- *
- * If your game uses DP for world geometry too, you may need to add
- * FFP conversion logic here similar to DrawIndexedPrimitive.
- */
+/* 81: DrawPrimitive — GAME-SPECIFIC draw routing for non-indexed draws */
 static int __stdcall WD_DrawPrimitive(WrappedDevice *self, unsigned int pt, unsigned int sv, unsigned int pc) {
     typedef int (__stdcall *FN)(void*, unsigned int, unsigned int, unsigned int);
     int hr;
     self->drawCallCount++;
 
-    FFP_Disengage(self);
-    hr = ((FN)RealVtbl(self)[SLOT_DrawPrimitive])(self->pReal, pt, sv, pc);
+    if (self->viewProjValid && self->lastDecl && !self->curDeclHasPosT && !self->curDeclIsSkinned) {
+        /* World-space non-indexed draw: engage FFP */
+        FFP_Engage(self);
+        {
+            typedef int (__stdcall *FN_SetTex)(void*, unsigned int, void*);
+            int as = self->albedoStage;
+            void *albedo = (as >= 0 && as < 8) ? self->curTexture[as] : self->curTexture[0];
+            int ts;
+            ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, 0, albedo);
+            for (ts = 1; ts < 8; ts++)
+                ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, ts, NULL);
+        }
+        hr = ((FN)RealVtbl(self)[SLOT_DrawPrimitive])(self->pReal, pt, sv, pc);
+        /* Restore original texture bindings */
+        {
+            typedef int (__stdcall *FN_SetTex)(void*, unsigned int, void*);
+            int ts;
+            for (ts = 0; ts < 8; ts++)
+                ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, ts, self->curTexture[ts]);
+        }
+    } else {
+        /* Passthrough: POSITIONT / no decl / pre-viewProj / skinned */
+        FFP_Disengage(self);
+        hr = ((FN)RealVtbl(self)[SLOT_DrawPrimitive])(self->pReal, pt, sv, pc);
+    }
 
 #if DIAG_ENABLED
     if (DIAG_ACTIVE(self) && self->drawCallCount <= 200) {
@@ -860,33 +832,12 @@ static int __stdcall WD_DrawPrimitive(WrappedDevice *self, unsigned int pt, unsi
         log_int("    startVtx=", sv);
         log_int("    primCount=", pc);
         log_hex("    hr=", hr);
-        if (self->drawCallCount <= 5) {
-            diag_log_matrix("    view", &self->vsConst[VS_REG_VIEW_START * 4]);
-            diag_log_matrix("    proj", &self->vsConst[VS_REG_PROJ_START * 4]);
-            diag_log_matrix("    world", &self->vsConst[VS_REG_WORLD_START * 4]);
-        }
     }
 #endif
     return hr;
 }
 
-/*
- * 82: DrawIndexedPrimitive — Core FFP conversion
- *
- * GAME-SPECIFIC: This is the main decision point. The routing logic
- * determines which draws get FFP-converted vs passed through with shaders.
- *
- * Default behavior:
- *   - If view/proj not yet captured -> pass through with shaders
- *   - If skinned mesh -> pass through with shaders
- *   - Otherwise -> engage FFP, draw
- *
- * You may need to adjust this for your game:
- *   - Some games need shader pass-through for specific draw calls
- *     (shadow maps, post-processing, etc.) — filter by shader pointer,
- *     render target, vertex count, or other state
- *   - Some games use different texcoord formats or vertex layouts
- */
+/* 82: DrawIndexedPrimitive — GAME-SPECIFIC draw routing (see prompt for decision tree) */
 static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
     unsigned int pt, int bvi, unsigned int mi, unsigned int nv,
     unsigned int si, unsigned int pc)
@@ -897,50 +848,54 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
 
     if (self->viewProjValid) {
         if (self->curDeclIsSkinned) {
-            /*
-             * Skinned mesh: pass through with original shaders.
-             * FFP indexed vertex blending has limited bone count and
-             * can't handle compressed vertex formats.
-             */
+#if ENABLE_SKINNING
+            hr = Skin_DrawDIP(self, pt, bvi, mi, nv, si, pc);
+#else
+            /* Skinned meshes pass through with original shaders */
+            FFP_Disengage(self);
+            hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
+#endif
+        } else if (!self->curDeclHasNormal) {
+            /* No NORMAL → HUD/UI passthrough. GAME-SPECIFIC: remove if world geo lacks NORMAL */
             FFP_Disengage(self);
             hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
         } else {
-            /* Rigid mesh: FFP conversion */
-
+            /* Rigid 3D mesh (has NORMAL): engage FFP */
             FFP_Engage(self);
 #if ENABLE_SKINNING
             if (self->skinningSetup) {
                 FFP_DisableSkinning(self);
             }
 #endif
-
-            /* Rebind albedo texture to stage 0 if game uses a different stage */
+            /* Rebind albedo to stage 0, NULL stages 1-7 */
             {
                 typedef int (__stdcall *FN_SetTex)(void*, unsigned int, void*);
                 int as = self->albedoStage;
-                if (as > 0 && as < 8 && self->curTexture[as]) {
-                    ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, 0, self->curTexture[as]);
-                }
+                void *albedo = (as >= 0 && as < 8) ? self->curTexture[as] : self->curTexture[0];
+                int ts;
+                ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, 0, albedo);
+                for (ts = 1; ts < 8; ts++)
+                    ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, ts, NULL);
             }
 
-            hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
+            hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt,
+                bvi, mi, nv, si, pc);
 
-            /* Restore original texture if swapped */
+            /* Restore all original texture bindings */
             {
                 typedef int (__stdcall *FN_SetTex)(void*, unsigned int, void*);
-                int as = self->albedoStage;
-                if (as > 0 && as < 8 && self->curTexture[as]) {
-                    ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, 0, self->curTexture[0]);
-                }
+                int ts;
+                for (ts = 0; ts < 8; ts++)
+                    ((FN_SetTex)RealVtbl(self)[SLOT_SetTexture])(self->pReal, ts, self->curTexture[ts]);
             }
         }
     } else {
-        /* Transforms not captured yet, pass through with shaders */
+        /* Transforms not ready yet, pass through with shaders */
         hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
     }
 
 #if DIAG_ENABLED
-    /* Track unique textures per stage */
+    /* Track unique textures per stage for this frame */
     if (DIAG_ACTIVE(self)) {
         int ts;
         for (ts = 0; ts < 8; ts++) {
@@ -959,13 +914,23 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
     if (DIAG_ACTIVE(self) && self->drawCallCount <= 200) {
         log_int("  DIP #", self->drawCallCount);
         log_hex("    decl=", (unsigned int)self->lastDecl);
+        log_int("    type=", pt);
+        log_int("    baseVtx=", bvi);
         log_int("    numVerts=", nv);
         log_int("    primCount=", pc);
+        log_hex("    hr=", hr);
         log_int("    stride0=", self->streamStride[0]);
+        log_int("    stride1=", self->streamStride[1]);
         if (self->curDeclIsSkinned) {
             log_str("    [SKINNED]\r\n");
+#if ENABLE_SKINNING
+            log_int("    boneStart=", self->boneStartReg);
+            log_int("    numBones=", self->numBones);
+#endif
         }
+        log_int("    hasNormal=", self->curDeclHasNormal);
         log_int("    hasTexcoord=", self->curDeclHasTexcoord);
+        log_int("    tcType=", self->curDeclTexcoordType);
         {
             int ts;
             for (ts = 0; ts < 8; ts++) {
@@ -975,10 +940,52 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
                 }
             }
         }
+        /* Log raw bytes of first vertex for early calls (helps diagnose vertex layout) */
+        if (self->drawCallCount <= 10 && self->streamVB[0] && self->streamStride[0] > 0) {
+            typedef int (__stdcall *FN_Lock)(void*, unsigned int, unsigned int, void**, unsigned int);
+            typedef int (__stdcall *FN_Unlock)(void*);
+            void **vbVt = *(void***)self->streamVB[0];
+            unsigned char *vbData = NULL;
+            unsigned int readOff = self->streamOffset[0] + (unsigned int)bvi * self->streamStride[0];
+            int lockHr = ((FN_Lock)vbVt[11])(self->streamVB[0], readOff, self->streamStride[0] * 2, (void**)&vbData, 0x10 /*READONLY*/);
+            if (lockHr == 0 && vbData) {
+                unsigned int stride = self->streamStride[0];
+                unsigned int b;
+                log_int("    vtx0 raw (", stride);
+                log_str(" bytes):\r\n      ");
+                for (b = 0; b < stride && b < 64; b++) {
+                    const char *hex = "0123456789ABCDEF";
+                    char hx[4];
+                    hx[0] = hex[(vbData[b] >> 4) & 0xF];
+                    hx[1] = hex[vbData[b] & 0xF];
+                    hx[2] = ' '; hx[3] = 0;
+                    log_str(hx);
+                    if (b == 11 || b == 15 || b == 19 || b == 23 || b == 27 || b == 31) log_str("| ");
+                }
+                log_str("\r\n");
+                if (stride >= 12) {
+                    float *fp = (float*)vbData;
+                    log_floats_dec("      pos: ", fp, 3);
+                }
+                ((FN_Unlock)vbVt[12])(self->streamVB[0]);
+            }
+        }
+        /* Log key VS constant register blocks on first 5 calls */
         if (self->drawCallCount <= 5) {
-            diag_log_matrix("    view", &self->vsConst[VS_REG_VIEW_START * 4]);
-            diag_log_matrix("    proj", &self->vsConst[VS_REG_PROJ_START * 4]);
-            diag_log_matrix("    world", &self->vsConst[VS_REG_WORLD_START * 4]);
+            if (mat4_is_interesting(&self->vsConst[0]))        diag_log_matrix("    c0-c3",   &self->vsConst[0]);
+            if (mat4_is_interesting(&self->vsConst[4*4]))      diag_log_matrix("    c4-c7",   &self->vsConst[4*4]);
+            if (mat4_is_interesting(&self->vsConst[8*4]))      diag_log_matrix("    c8-c11",  &self->vsConst[8*4]);
+            if (mat4_is_interesting(&self->vsConst[12*4]))     diag_log_matrix("    c12-c15", &self->vsConst[12*4]);
+            if (mat4_is_interesting(&self->vsConst[16*4]))     diag_log_matrix("    c16-c19", &self->vsConst[16*4]);
+            if (mat4_is_interesting(&self->vsConst[20*4]))     diag_log_matrix("    c20-c23", &self->vsConst[20*4]);
+            if (mat4_is_interesting(&self->vsConst[36*4]))     diag_log_matrix("    c36-c39", &self->vsConst[36*4]);
+#if ENABLE_SKINNING
+            if (self->curDeclIsSkinned && self->boneStartReg >= (int)VS_REG_BONE_THRESHOLD) {
+                diag_log_matrix("    bone0", &self->vsConst[self->boneStartReg * 4]);
+                if (self->numBones > 1)
+                    diag_log_matrix("    bone1", &self->vsConst[(self->boneStartReg + VS_REGS_PER_BONE) * 4]);
+            }
+#endif
         }
     }
 #endif
@@ -1000,14 +1007,7 @@ static int __stdcall WD_SetVertexShader(WrappedDevice *self, void *pShader) {
     return ((FN)RealVtbl(self)[SLOT_SetVertexShader])(self->pReal, pShader);
 }
 
-/*
- * 94: SetVertexShaderConstantF — Capture constants for FFP transform mapping
- *
- * GAME-SPECIFIC: The dirty flag logic here uses the VS_REG_* defines.
- * The bone detection heuristic uses VS_REG_BONE_THRESHOLD and
- * VS_REGS_PER_BONE. Adjust these defines if your game uses a
- * different VS constant layout.
- */
+/* 94: SetVertexShaderConstantF — GAME-SPECIFIC: dirty tracking uses VS_REG_* defines */
 static int __stdcall WD_SetVertexShaderConstantF(WrappedDevice *self,
     unsigned int startReg, float *pData, unsigned int count)
 {
@@ -1055,10 +1055,41 @@ static int __stdcall WD_SetVertexShaderConstantF(WrappedDevice *self,
         if (DIAG_ACTIVE(self)) {
             log_int("  SetVSConstF start=", startReg);
             log_int("    count=", count);
-            if (count == 4) {
-                diag_log_matrix("    mat", pData);
+            if (count == 16) {
+                /* 16-register pack: log as 4 separate 4x4 matrices */
+                char label[32];
+                int m;
+                for (m = 0; m < 4; m++) {
+                    int s = startReg + m * 4, e2 = s + 3, p2 = 0;
+                    label[p2++] = 'c';
+                    if (s >= 100) label[p2++] = '0' + (s / 100);
+                    if (s >= 10)  label[p2++] = '0' + ((s / 10) % 10);
+                    label[p2++] = '0' + (s % 10);
+                    label[p2++] = '-'; label[p2++] = 'c';
+                    if (e2 >= 100) label[p2++] = '0' + (e2 / 100);
+                    if (e2 >= 10)  label[p2++] = '0' + ((e2 / 10) % 10);
+                    label[p2++] = '0' + (e2 % 10);
+                    label[p2] = '\0';
+                    diag_log_matrix(label, &pData[m * 16]);
+                }
+            } else if (count == 4) {
+                char label[32];
+                int s = startReg, e2 = startReg + 3, p2 = 0;
+                label[p2++] = 'c';
+                if (s >= 100) label[p2++] = '0' + (s / 100);
+                if (s >= 10)  label[p2++] = '0' + ((s / 10) % 10);
+                label[p2++] = '0' + (s % 10);
+                label[p2++] = '-'; label[p2++] = 'c';
+                if (e2 >= 100) label[p2++] = '0' + (e2 / 100);
+                if (e2 >= 10)  label[p2++] = '0' + ((e2 / 10) % 10);
+                label[p2++] = '0' + (e2 % 10);
+                label[p2] = '\0';
+                diag_log_matrix(label, pData);
             } else if (count >= 1 && count <= 2) {
                 log_floats_dec("    data: ", pData, count * 4);
+            } else if (count >= 5) {
+                log_str("    (large write, first 4x4):\r\n");
+                log_floats_dec("      ", pData, 16);
             }
         }
 #endif
@@ -1115,26 +1146,26 @@ static int __stdcall WD_SetStreamSource(WrappedDevice *self,
     return ((FN)RealVtbl(self)[SLOT_SetStreamSource])(self->pReal, stream, pVB, offset, stride);
 }
 
-/*
- * 87: SetVertexDeclaration — Parse vertex elements, detect skinning
- *
- * Parses the raw D3DVERTEXELEMENT9 array to detect:
- *   - BLENDWEIGHT + BLENDINDICES -> skinned mesh
- *   - TEXCOORD[0] presence
- *   - Presence of NORMAL, COLOR
- */
+/* 87: SetVertexDeclaration — Parse vertex elements, detect skinning */
 static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
     typedef int (__stdcall *FN)(void*, void*);
 
     self->lastDecl = pDecl;
     self->curDeclIsSkinned = 0;
-#if ENABLE_SKINNING
-    self->curDeclNumWeights = 0;
-#endif
     self->curDeclHasTexcoord = 0;
     self->curDeclHasNormal = 0;
     self->curDeclHasColor = 0;
-    self->curDeclNumElems = 0;
+    self->curDeclHasPosT = 0;
+    self->curDeclTexcoordType = -1;
+    self->curDeclTexcoordOff = 0;
+#if ENABLE_SKINNING
+    self->curDeclNumWeights = 0;
+    self->curDeclNormalOff = 0;    self->curDeclNormalType = -1;
+    self->curDeclBlendWeightOff = 0;
+    self->curDeclBlendWeightType = 0;
+    self->curDeclBlendIndicesOff = 0;
+    self->curDeclPosOff = 0;
+#endif
 
     if (pDecl) {
         typedef int (__stdcall *FN_GetDecl)(void*, void*, unsigned int*);
@@ -1148,50 +1179,66 @@ static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
                 unsigned int e;
                 int hasBlendWeight = 0, hasBlendIndices = 0;
                 int blendWeightType = 0;
-                int realElems = 0;
 
                 for (e = 0; e < numElems; e++) {
                     unsigned char *el = &elemBuf[e * 8];
-                    unsigned short stream = *(unsigned short*)&el[0];
-                    unsigned char usage = el[6];
-                    unsigned char usageIdx = el[7];
-                    unsigned char type = el[4];
+                    unsigned short stream  = *(unsigned short*)&el[0];
+                    unsigned short offset  = *(unsigned short*)&el[2];
+                    unsigned char  type    = el[4];
+                    unsigned char  usage   = el[6];
+                    unsigned char  usageIdx = el[7];
                     if (stream == 0xFF || stream == 0xFFFF) break;
-                    realElems++;
+
+                    if (usage == D3DDECLUSAGE_POSITIONT) {
+                        self->curDeclHasPosT = 1;
+                    }
                     if (usage == D3DDECLUSAGE_BLENDWEIGHT) {
                         hasBlendWeight = 1;
                         blendWeightType = type;
+#if ENABLE_SKINNING
+                        self->curDeclBlendWeightOff  = offset;
+                        self->curDeclBlendWeightType = type;
+#endif
                     }
                     if (usage == D3DDECLUSAGE_BLENDINDICES) {
                         hasBlendIndices = 1;
+#if ENABLE_SKINNING
+                        self->curDeclBlendIndicesOff = offset;
+#endif
+                    }
+                    if (usage == D3DDECLUSAGE_POSITION && stream == 0) {
+#if ENABLE_SKINNING
+                        self->curDeclPosOff = offset;
+#endif
+                    }
+                    if (usage == D3DDECLUSAGE_NORMAL && stream == 0) {
+                        self->curDeclHasNormal = 1;
+#if ENABLE_SKINNING
+                        self->curDeclNormalOff  = offset;
+                        self->curDeclNormalType = type;
+#endif
                     }
                     if (usage == D3DDECLUSAGE_TEXCOORD && usageIdx == 0 && stream == 0) {
-                        self->curDeclHasTexcoord = 1;
-                    }
-                    if (usage == D3DDECLUSAGE_NORMAL) {
-                        self->curDeclHasNormal = 1;
+                        self->curDeclHasTexcoord    = 1;
+                        self->curDeclTexcoordType   = type;
+                        self->curDeclTexcoordOff    = offset;
                     }
                     if (usage == D3DDECLUSAGE_COLOR) {
                         self->curDeclHasColor = 1;
                     }
                 }
 
-                if (realElems <= 20) {
-                    int i;
-                    self->curDeclNumElems = realElems;
-                    for (i = 0; i < realElems * 8; i++)
-                        self->curDeclElems[i] = elemBuf[i];
-                }
-
                 if (hasBlendWeight && hasBlendIndices) {
                     self->curDeclIsSkinned = 1;
 #if ENABLE_SKINNING
+                    /* Infer weight count from BLENDWEIGHT element type */
                     switch (blendWeightType) {
-                        case 0: self->curDeclNumWeights = 1; break;
-                        case 1: self->curDeclNumWeights = 2; break;
-                        case 2: self->curDeclNumWeights = 3; break;
-                        case 3: self->curDeclNumWeights = 3; break;
-                        default: self->curDeclNumWeights = 3; break;
+                        case D3DDECLTYPE_FLOAT1:  self->curDeclNumWeights = 1; break;
+                        case D3DDECLTYPE_FLOAT2:  self->curDeclNumWeights = 2; break;
+                        case D3DDECLTYPE_FLOAT3:  self->curDeclNumWeights = 3; break;
+                        case D3DDECLTYPE_FLOAT4:  self->curDeclNumWeights = 3; break;
+                        case D3DDECLTYPE_UBYTE4N: self->curDeclNumWeights = 3; break;
+                        default:                  self->curDeclNumWeights = 3; break;
                     }
 #endif
                 }
@@ -1218,30 +1265,37 @@ static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
                         log_hex("  DECL decl=", (unsigned int)pDecl);
                         log_int("    numElems=", numElems);
                         if (self->curDeclIsSkinned) {
+#if ENABLE_SKINNING
+                            log_int("    SKINNED numWeights=", self->curDeclNumWeights);
+#else
                             log_str("    SKINNED\r\n");
+#endif
+                        }
+                        if (self->curDeclHasPosT) {
+                            log_str("    POSITIONT\r\n");
                         }
                         for (e = 0; e < numElems; e++) {
                             unsigned char *el = &elemBuf[e * 8];
-                            unsigned short stream = *(unsigned short*)&el[0];
-                            unsigned short offset = *(unsigned short*)&el[2];
-                            unsigned char type = el[4];
-                            unsigned char usage = el[6];
-                            unsigned char usageIdx = el[7];
-                            if (stream == 0xFF || stream == 0xFFFF) break;
+                            unsigned short eStream = *(unsigned short*)&el[0];
+                            unsigned short eOff    = *(unsigned short*)&el[2];
+                            unsigned char  eType   = el[4];
+                            unsigned char  eUsage  = el[6];
+                            unsigned char  eUIdx   = el[7];
+                            if (eStream == 0xFF || eStream == 0xFFFF) break;
                             log_str("    [s");
-                            log_int("", stream);
+                            log_int("", eStream);
                             log_str("    +");
-                            log_int("", offset);
+                            log_int("", eOff);
                             log_str("    ] ");
-                            if (usage < 14) log_str(usageNames[usage]);
-                            else log_int("usage=", usage);
+                            if (eUsage < 14) log_str(usageNames[eUsage]);
+                            else log_int("usage=", eUsage);
                             log_str("[");
                             {
-                                char ub[4]; ub[0] = '0' + usageIdx; ub[1] = ']'; ub[2] = ' '; ub[3] = 0;
+                                char ub[4]; ub[0] = '0' + eUIdx; ub[1] = ']'; ub[2] = ' '; ub[3] = 0;
                                 log_str(ub);
                             }
-                            if (type <= 17) log_str(typeNames[type]);
-                            else log_int("type=", type);
+                            if (eType <= 17) log_str(typeNames[eType]);
+                            else log_int("type=", eType);
                             log_str("\r\n");
                         }
                     }
@@ -1395,12 +1449,14 @@ WrappedDevice* WrappedDevice_Create(void *pRealDevice) {
     w->viewProjValid = 0;
     w->lastDecl = NULL;
     w->curDeclIsSkinned = 0;
+    w->curDeclHasTexcoord = 0;
+    w->curDeclHasNormal = 0;
+    w->curDeclHasColor = 0;
+    w->curDeclHasPosT = 0;
+    w->curDeclTexcoordType = -1;
+    w->curDeclTexcoordOff = 0;
 #if ENABLE_SKINNING
-    w->curDeclNumWeights = 0;
-    w->boneStartReg = 0;
-    w->numBones = 0;
-    w->skinningSetup = 0;
-    w->lastVsConstWriteEnd = 0;
+    Skin_InitDevice(w, pRealDevice);
 #endif
     { int s; for (s = 0; s < 4; s++) { w->streamVB[s] = NULL; w->streamOffset[s] = 0; w->streamStride[s] = 0; } }
     { int t; for (t = 0; t < 8; t++) w->curTexture[t] = NULL; }

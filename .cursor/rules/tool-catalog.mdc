@@ -315,7 +315,7 @@ $ 0x7C554C Flags g_renderFlags
 
 Some DX9 games use custom vertex shaders that RTX Remix cannot inject into because Remix requires fixed-function pipeline (FFP) geometry to apply path-traced lighting and replaceable assets. The FFP template (`rtx_remix_tools/dx/dx9_ffp_template/`) is a D3D9 proxy DLL that intercepts `IDirect3DDevice9`, captures the game's VS constant matrices (View/Projection/World), NULLs the shaders on draw calls, applies the matrices through `SetTransform`, and chain-loads RTX Remix. It is not a drop-in solution — every game needs its own RE investigation.
 
-If you use this workflow, you __must__ read the associated .cursor\skills\dx9-ffp-port.mdc file for detailed instructions, common pitfalls, and architectural explanations.
+If you use this workflow, you __must__ read the associated .cursor\rules\dx9-ffp-port.mdc file for detailed instructions, common pitfalls, and architectural explanations.
 
 **When to suggest this workflow**: whenever the user mentions FFP rendering, DX9 shader-to-FFP conversion, or building a `d3d9.dll` proxy for a game. Potentially recommend it if the game you're reverse engineering would have better results with this than other methods. Proactively recommend loading @dx9-ffp-port for full porting context — it walks through the complete workflow and common pitfalls.
 
@@ -365,7 +365,7 @@ The goal is to answer three questions. The tools and approaches below are illust
 - **Verification**: `dx9tracer analyze --const-provenance-draw N` — see actual matrix values and which seq# set them
 - Script output gives candidate call sites; `decompiler.py` on those sites can reveal register ranges and data sources
 - If scripts miss call sites, `xrefs.py` on the `SetVertexShaderConstantF` IAT slot finds the rest
-- `livetools trace` reading `[esp+4]:4:uint32; [esp+8]:4:uint32; [esp+c]:64:float32` (startReg, count, data) can confirm live values
+- `livetools trace` reading `[esp+8]:4:uint32; [esp+10]:4:uint32; *[esp+c]:64:float32` (startReg, Vector4fCount, data via pointer deref) can confirm live values
 - If the game uses an indirection layer, `callgraph.py --up` from the call site can expose the real dispatch path
 
 **2. What vertex formats are used, and is there skinning?**
