@@ -1,0 +1,22 @@
+---
+description: Sync Tomb Raider test runtime before launch
+alwaysApply: true
+---
+
+# Sync Before Test Launch
+
+Before launching or testing `trl.exe`, sync the active runtime artifacts from
+`patches/trl_legend_ffp/proxy/` into `A:\SteamLibrary\steamapps\common\Tomb Raider Legend`.
+
+Use:
+
+`powershell -ExecutionPolicy Bypass -File "patches/trl_legend_ffp/sync_runtime_to_game.ps1"`
+
+If launching as part of the same step, use:
+
+`powershell -ExecutionPolicy Bypass -File "patches/trl_legend_ffp/sync_runtime_to_game.ps1" -Launch`
+
+This keeps the live game directory current with the working proxy folder.
+
+Never assume repo-side changes affect the running game until the runtime files
+have been synced into the game directory.

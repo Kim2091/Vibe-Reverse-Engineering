@@ -1,0 +1,29 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "A:/SteamLibrary/steamapps/common/Tomb Raider Legend"
+		},
+		{
+			"path": "../../../../../Downloads/remix"
+		},
+		{
+			"path": "../../../../../Downloads/TR7-Menu-Hook/TRLAU-menu-hook"
+		},
+		{
+			"path": "../../../../../Desktop/dxvk-remix/Vibe-Reverse-Engineering"
+		},
+		{
+			"path": "../../../../../Desktop/TombRaiderRTXBackups/TombRaiderLegendRTX/Vibe-Reverse-Engineeringoldrenderingworking"
+		},
+		{
+			"path": "../../../../../Downloads/ghidra_12.0_PUBLIC_20260314_GhidrAssist"
+		},
+		{
+			"path": "../../../../../Downloads/ghidra_12.0_PUBLIC_20260314_GhidrAssistMCP"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,14 @@
+---
+description: Launch Tomb Raider Legend from the game directory
+alwaysApply: true
+---
+
+# Tomb Raider Launch Directory
+
+When launching `trl.exe`, always use `A:\SteamLibrary\steamapps\common\Tomb Raider Legend` as the working directory.
+
+Do not launch `trl.exe` from the repo root or any other folder.
+
+If using `Start-Process`, pass the game directory as `-WorkingDirectory` or run the command from that directory.
+
+Reason: the game resolves `bigfile.*` archives relative to its current working directory, and the wrong launch directory causes `Failed to open BIGFILE.000`.
