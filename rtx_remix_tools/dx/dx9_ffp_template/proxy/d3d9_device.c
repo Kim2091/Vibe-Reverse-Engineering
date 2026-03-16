@@ -72,7 +72,6 @@ extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
  *   - World matrix at a fixed register (c0, c8, c16, etc.)
  *   - Bone palette starts after world, 3 or 4 regs per bone
  *
- * The defaults below match the MGR:R engine layout.
  * ============================================================ */
 #define VS_REG_VIEW_START       0   /* First register of 4x4 view matrix (4 vec4) */
 #define VS_REG_VIEW_END         4   /* One past last view register */

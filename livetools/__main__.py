@@ -274,6 +274,17 @@ def cmd_mem_write(args: argparse.Namespace) -> None:
         print(f"[error] {resp.get('error', resp.get('msg', 'unknown'))}")
 
 
+def cmd_mem_alloc(args: argparse.Namespace) -> None:
+    if not _require_attached():
+        return
+    resp = client.send_command({"cmd": "mem_alloc", "size": args.size})
+    print(client.format_status_line(resp))
+    if resp.get("ok"):
+        print(f"Allocated {args.size} bytes at {resp['addr']} (rwx)")
+    else:
+        print(f"[error] {resp.get('error', resp.get('msg', 'unknown'))}")
+
+
 def cmd_disasm(args: argparse.Namespace) -> None:
     if not _require_attached():
         return
@@ -650,6 +661,8 @@ def build_parser() -> argparse.ArgumentParser:
     mw = mem_sub.add_parser("write", help="Write hex bytes to address")
     mw.add_argument("addr", help="Target address in hex")
     mw.add_argument("hex_bytes", help="Hex bytes (e.g. '90 90 90' or 'B001C3')")
+    ma = mem_sub.add_parser("alloc", help="Allocate rwx memory in target process")
+    ma.add_argument("size", type=int, help="Number of bytes to allocate")
 
     sp = sub.add_parser("disasm",
         help="Disassemble instructions at address (default: current EIP/RIP)")
@@ -960,7 +973,8 @@ def main() -> None:
         "stack": cmd_stack,
         "mem": lambda a: cmd_mem_read(a) if getattr(a, "mem_action", None) == "read"
                          else cmd_mem_write(a) if getattr(a, "mem_action", None) == "write"
-                         else print("Usage: python -m livetools mem [read|write]"),
+                         else cmd_mem_alloc(a) if getattr(a, "mem_action", None) == "alloc"
+                         else print("Usage: python -m livetools mem [read|write|alloc]"),
         "disasm": cmd_disasm,
         "bt": cmd_bt,
         "step": cmd_step,

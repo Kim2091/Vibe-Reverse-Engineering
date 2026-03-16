@@ -141,7 +141,19 @@ Use this to iterate: wrong matrices → re-check register mapping. Missing textu
 
 ## Using the RE Tools
 
-All the Vibe RE tools described in the workspace instructions (retools, livetools) are available. Key workflows for FFP porting:
+All the Vibe RE tools described in the workspace instructions (retools, livetools, dx9 tracer) are available. Key workflows for FFP porting:
+
+### D3D9 Frame Trace (recommended first step)
+
+Deploy the D3D9 tracer (`graphics/directx/dx9/tracer/bin/`) to capture the application's full render frame -- this is the fastest way to answer all three porting questions:
+
+- `python -m graphics.directx.dx9.tracer analyze <trace.jsonl> --shader-map` -- CTAB disassembly shows named parameters and register mappings (e.g. `WorldViewProj c0 4`, `WorldView c4 3`, `FogValue c8 1`). Directly reveals which constant registers hold View, Projection, and World matrices.
+- `... --const-provenance` -- shows which `SetVertexShaderConstantF` call set each register at each draw. `--const-provenance-draw N` gives full register values for a specific draw.
+- `... --vtx-formats` -- groups draws by vertex declaration with full element breakdown (POSITION, NORMAL, BLENDWEIGHT, etc.)
+- `... --render-passes` + `--pipeline-diagram` -- shows the render pipeline structure and pass types
+- `... --classify-draws` -- auto-tags draws by render state (alpha, ztest, fog, etc.)
+
+### Traditional RE tools
 
 - `retools.decompiler` with `--types kb.h` for decompiling rendering functions
 - `livetools trace` on `SetVertexShaderConstantF` to see register + data patterns
