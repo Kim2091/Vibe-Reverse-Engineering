@@ -125,6 +125,77 @@ python -m livetools status              # check connection
 
 **NOTE**: Some processes require their window to be focused for traces to capture data.
 
+### D3D9 Frame Trace (`graphics/directx/dx9/tracer/`) -- full-frame API capture and analysis
+
+A proxy DLL that intercepts all 119 `IDirect3DDevice9` methods, capturing every call with arguments, backtraces, pointer-followed data (matrices, constants, shader bytecodes), and in-process shader disassembly (via the game's own d3dx9 DLL). Outputs JSONL for offline analysis. Like `apitrace` but with RE-focused analysis built in.
+
+**Architecture**: Python codegen (`d3d9_methods.py`) → C proxy DLL (`src/`) → JSONL → Python analyzer (`analyze.py`). The proxy chains to the real d3d9 (or another wrapper) and adds near-zero overhead when not capturing.
+
+#### Setup and Capture
+
+```
+python -m graphics.directx.dx9.tracer codegen -o d3d9_trace_hooks.inc   # regenerate C hooks
+cd graphics/directx/dx9/tracer/src && build.bat                              # build proxy DLL
+# Deploy d3d9.dll + proxy.ini to game directory
+python -m graphics.directx.dx9.tracer trigger --game-dir <GAME_DIR>     # trigger capture (3s countdown)
+```
+
+**proxy.ini** settings: `CaptureFrames=N`, `CaptureInit=1` (capture boot-time calls), `Chain.DLL=<wrapper.dll>` (or empty for system d3d9).
+
+**IMPORTANT**: `--game-dir` must point to the directory containing the deployed proxy DLL.
+
+#### Analysis Commands
+
+All analysis: `python -m graphics.directx.dx9.tracer analyze <JSONL> [OPTIONS]`
+
+| Option | Purpose |
+|--------|---------|
+| `--summary` | Overview: calls per frame/method, backtrace completeness |
+| `--draw-calls` | List every draw call with state deltas |
+| `--callers METHOD` | Caller histogram for a specific method |
+| `--hotpaths` | Frequency-sorted call paths from backtraces |
+| `--state-at SEQ` | Reconstruct full device state at a specific sequence number |
+| `--render-loop` | Detect the render loop entry point from backtraces |
+| `--render-passes` | Group draws by render target, classify pass types |
+| `--matrix-flow` | Track matrix uploads per SetTransform/SetVertexShaderConstantF |
+| `--shader-map` | Disassemble all shaders (CTAB names, register map, instructions) |
+| `--const-provenance` | Compact: for each draw, show which seq# set each named constant |
+| `--const-provenance-draw N` | Detailed: all register values and sources for draw #N |
+| `--classify-draws` | Auto-tag draws (alpha, ztest, fog, fullscreen-quad, etc.) with draw method (DIP/DP/DPUP/DIPUP) and vertex shader breakdown |
+| `--vtx-formats` | Group draws by vertex declaration with element breakdown |
+| `--redundant` | Find redundant state-set calls |
+| `--texture-freq` | Texture binding frequency across all draws |
+| `--rt-graph` | Render target dependency graph (mermaid) |
+| `--diff-draws A B` | State diff between two draw calls |
+| `--diff-frames A B` | Compare two captured frames |
+| `--const-evolution RANGE` | Track how specific registers change across draws (e.g. `vs:c4-c6`, `ps:c0-c3`). Shows per-register stability, 3x3 rotation grouping to identify shared View matrix, translation spread |
+| `--state-snapshot DRAW#` | Complete state dump at a draw index: shaders + CTAB names, constants, vertex decl, textures, render states, transforms, samplers |
+| `--transform-calls` | Analyze SetTransform/SetViewport usage: timing relative to draws, matrix values, whether game uses FFP transforms or shader constants |
+| `--animate-constants` | Cross-frame constant register tracking |
+| `--pipeline-diagram` | Auto-generate mermaid render pipeline diagram |
+| `--resolve-addrs BINARY` | Resolve backtrace addresses to function names via retools |
+| `--filter EXPR` | Filter records by field |
+| `--export-csv FILE` | Export raw records to CSV |
+
+#### Key Data Captured
+
+- **Every D3D9 call**: method name, slot, arguments, return value, full backtrace
+- **Shader bytecodes + disassembly**: CTAB with **named parameters** (e.g. `WorldViewProj`, `FogValue`), register mappings, full instructions
+- **Created object handles**: `CreateVertexDeclaration`/`CreateVertexShader`/`CreatePixelShader` output pointers for handle→bytecode linking
+- **Constant values**: float/int constant registers with source seq# tracking
+- **Matrices**: 4x4 float matrices from `SetTransform`/`MultiplyTransform`
+- **Vertex declarations**: full `D3DVERTEXELEMENT9` arrays with type/usage/stream decoded
+
+#### Source Files
+
+| Path | Role |
+|------|------|
+| `graphics/directx/dx9/tracer/cli.py` | CLI entry point (codegen, trigger, analyze) |
+| `graphics/directx/dx9/tracer/analyze.py` | Analysis engine (all `--*` options) |
+| `graphics/directx/dx9/tracer/d3d9_methods.py` | Single source of truth: method signatures, D3D9 enum constants, codegen |
+| `graphics/directx/dx9/tracer/src/` | C proxy DLL source (edit and rebuild for advanced use cases) |
+| `graphics/directx/dx9/tracer/bin/` | Pre-built d3d9.dll + proxy.ini (deploy directly) |
+
 ### Decision Guide
 
 - "What does this function do?" → `decompiler.py` (best), then `disasm.py` + `cfg.py`
@@ -149,6 +220,18 @@ python -m livetools status              # check connection
 - "What are the actual register values?" → `livetools trace --read` or `bp` + `regs`
 - "How many draw calls happen?" → `livetools dipcnt`
 - "Who writes to this memory address?" → `livetools memwatch`
+- **"What does the game's full render frame look like?"** → `dx9tracer analyze --summary` + `--render-passes` + `--pipeline-diagram`
+- "What shaders does the game use and what constants do they need?" → `dx9tracer analyze --shader-map`
+- "Which code set a specific shader constant at draw time?" → `dx9tracer analyze --const-provenance` or `--const-provenance-draw N`
+- "What vertex formats does the game use?" → `dx9tracer analyze --vtx-formats`
+- "What is the full device state at a specific call?" → `dx9tracer analyze --state-at SEQ` or `--state-snapshot DRAW#` (by draw index, with CTAB names)
+- "How do registers change across draws? Which are per-object vs frame-global?" → `dx9tracer analyze --const-evolution vs:c0-c8`
+- "Does the game use SetTransform or only shader constants for matrices?" → `dx9tracer analyze --transform-calls`
+- "How do two draw calls differ?" → `dx9tracer analyze --diff-draws A B`
+- "What is the render target dependency graph?" → `dx9tracer analyze --rt-graph`
+- "Where is the render loop entry point?" → `dx9tracer analyze --render-loop --resolve-addrs <binary>`
+- "Which draw method (DIP/DP) and which shaders account for most draws?" → `dx9tracer analyze --classify-draws`
+- "Which state sets are redundant?" → `dx9tracer analyze --redundant`
 
 ### Tool Caveats
 

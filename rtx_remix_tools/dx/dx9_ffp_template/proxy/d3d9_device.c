@@ -26,7 +26,23 @@ extern void log_floats(const char *prefix, float *data, unsigned int count);
 extern void log_float_val(const char *prefix, float f);
 extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 
-/* GAME-SPECIFIC: VS constant register layout (defaults = MGR:R) */
+/* ============================================================
+ * GAME-SPECIFIC: VS Constant Register Layout
+ *
+ * These define which vertex shader constant registers hold the
+ * View, Projection, and World matrices. Every game engine uses
+ * different register assignments. Discover yours with:
+ *
+ *   python scripts/find_vs_constants.py <your_game.exe>
+ *   python -m livetools trace <SetVSConstF_call_addr> \
+ *       --count 50 --read "[esp+4]:4:uint32; [esp+8]:4:uint32"
+ *
+ * Common patterns across engines:
+ *   - View+Proj often adjacent (c0-c7 or c4-c11)
+ *   - World matrix at a fixed register (c0, c8, c16, etc.)
+ *   - Bone palette starts after world, 3 or 4 regs per bone
+ *
+ * ============================================================ */
 #define VS_REG_VIEW_START       0   /* First register of 4x4 view matrix (4 vec4) */
 #define VS_REG_VIEW_END         4   /* One past last view register */
 #define VS_REG_PROJ_START       4   /* First register of 4x4 projection matrix */

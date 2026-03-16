@@ -23,6 +23,7 @@ var frozenBpId = null;
 
 var is64 = Process.pointerSize === 8;
 var ptrWidth = Process.pointerSize * 2;
+var _allocations = [];
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -983,6 +984,14 @@ rpc.exports = {
             Memory.protect(ptr(addrStr), bytes.length, 'rwx');
             ptr(addrStr).writeByteArray(bytes);
             return { ok: true };
+        } catch (e) { return { ok: false, msg: e.message }; }
+    },
+    allocMemory: function (size) {
+        try {
+            var p = Memory.alloc(size);
+            Memory.protect(p, size, 'rwx');
+            _allocations.push(p);
+            return { ok: true, addr: ptrToHex(p) };
         } catch (e) { return { ok: false, msg: e.message }; }
     },
 

@@ -18,6 +18,11 @@ venv/
 # Generated patch output (asi_patcher)
 patches/
 
+# D3D9 tracer runtime artifacts
+dxtrace_capture.trigger
+dxtrace_progress.txt
+dxtrace_frame.jsonl
+
 # livetools daemon state
 livetools/.state.json
 

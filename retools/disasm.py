@@ -32,6 +32,8 @@ def main():
                    help="Show raw hex bytes alongside each instruction")
     args = p.parse_args()
 
+    print("hint: use decompiler with --types kb.h for richer output", file=sys.stderr)
+
     b = Binary(args.binary)
     for insn in b.disasm(int(args.va, 16), args.count):
         if args.bytes:

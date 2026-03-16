@@ -198,6 +198,10 @@ def main() -> None:
              "or path to .h file with structs/functions/globals",
     )
     args = p.parse_args()
+    if not args.types:
+        print("hint: use --types kb.h to load a knowledge base for richer output", file=sys.stderr)
+    print("KB workflow: decompile -> learn -> update kb.h with new types/functions/globals → decompile again",
+          file=sys.stderr)
     print(decompile(args.binary, int(args.va, 16),
                     backend=args.backend, full_analysis=args.full_analysis,
                     types=args.types))

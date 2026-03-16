@@ -239,6 +239,10 @@ class Daemon:
         result = self.api.write_memory(cmd["addr"], cmd["hex"])
         return {**self._base_resp(), **result}
 
+    def _cmd_mem_alloc(self, cmd: dict) -> dict:
+        result = self.api.alloc_memory(cmd["size"])
+        return {**self._base_resp(), **result}
+
     def _cmd_disasm(self, cmd: dict) -> dict:
         addr = cmd.get("addr")
         if addr is None:
