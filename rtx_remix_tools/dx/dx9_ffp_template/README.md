@@ -74,7 +74,7 @@ python -m retools.decompiler game.exe 0xCALL_SITE_ADDR --types kb.h
 
 # Trace live to see actual register values
 python -m livetools trace 0xSetVSConstF_addr --count 50 \
-    --read "[esp+4]:4:uint32; [esp+8]:4:uint32; [esp+c]:64:float32"
+    --read "[esp+8]:4:uint32; [esp+10]:4:uint32; *[esp+c]:64:float32"
 ```
 
 Common patterns:
