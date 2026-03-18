@@ -18,6 +18,7 @@
 
 extern int g_cfgCaptureFrames;
 extern int g_cfgCaptureInit;
+extern int g_cfgFrameBoundarySlot;
 
 /* ---- Logging (from d3d9_trace_main.c) ---- */
 
@@ -489,7 +490,7 @@ static void trace_post(int slot, DWORD retval, DWORD *args) {
         }
     }
 
-    if (slot == SLOT_Present)
+    if (slot == g_cfgFrameBoundarySlot)
         trace_on_present();
 }
 

@@ -657,3 +657,19 @@ Once the matrix register layout is confirmed, update `d3d9_device.c`:
 Build with `build.bat`, deploy alongside `d3d9_remix.dll`, then iterate using `ffp_proxy.log`. Wrong matrices → re-check register mapping with `decompiler.py`. White/black objects → adjust `AlbedoStage` in `proxy.ini`. Geometry at origin → world matrix register is wrong, trace it live with `livetools trace`.
 
 For the full workflow, common pitfalls, and architecture details, load `#dx9-ffp-port` in Copilot Chat.
+
+---
+
+## Git Checkpoints
+
+Before any substantial edit, refactor, or experiment, create a named checkpoint with:
+
+`python checkpoint.py save "<short description>"`
+
+Use short, task-specific names such as `before-matrix-remap` or `pre-hook-refactor`.
+
+When the user wants to revisit an earlier project state:
+- Run `python checkpoint.py list` to find the checkpoint.
+- Run `python checkpoint.py restore "<name or id>"` to open that state on its own branch.
+
+Treat checkpoints as the repo's local time-travel layer. Use them before risky edits even if the user does not explicitly remind you.

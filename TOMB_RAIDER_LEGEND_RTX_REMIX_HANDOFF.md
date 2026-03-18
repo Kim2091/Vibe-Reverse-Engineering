@@ -683,3 +683,449 @@ The project is stuck because TRL's transform convention, draw-family split, and 
 - `TombRaiderLegend`: fused-WVP experimental rewrite
 
 Neither is final, but together they encode most of the expensive discovery work. Any next session should begin by preserving those assets, validating them against live traces, and only then changing the transform model.
+
+## 4. Session 2026-03-17: Frame Trace Analysis + Proxy Hardening
+
+This session used the DX9 frame tracer (`dxtrace_frame.jsonl`, 85MB, 149252 records) to establish ground truth about TRL's rendering pipeline. All findings below are from live frame capture data, not inference.
+
+### Ground Truth: Shader Constant Layout (CONFIRMED via CTAB)
+
+Every vertex shader in TRL uses D3DX9 Shader Compiler 9.11.519 with these constant tables:
+
+| Name | Register | Size | Notes |
+|------|----------|------|-------|
+| `WorldViewProject` | c0 | 4 regs | **Only transform matrix in ANY shader** |
+| `fogConsts` | c4 | 1 reg | Fog parameters |
+| `textureScroll` | c6 | 1 reg | UV animation (mad oT0.xy, v2, c6.w, c6) |
+| `bendConstants` | c8 | 8 regs | Vegetation bending (some shaders) |
+| `lightInfo` | c16+ | variable | Per-vertex lighting (some shaders) |
+| `envMatrix` | c40 | 2 regs | Environment mapping (some shaders) |
+
+**Critical fact**: There is NO separate World, View, or Projection matrix in any shader. c4-c7 and c8-c15 are NOT matrices — they are fog, scroll, and bend parameters. Previous assumptions that c4=World, c8=View, c12=ViewProj were wrong.
+
+### Ground Truth: SetVertexShaderConstantF Traffic
+
+From frame trace `--const-provenance`:
+
+| Pattern | Frequency | Content |
+|---------|-----------|---------|
+| `start=0, count=4` | Per-draw | WVP matrix (changes every object) |
+| `start=8, count=8` | Once per frame | Small values (0.01 range) — frustum/bend vectors, NOT matrices |
+| `start=6, count=1` | Per-draw | Texture scroll params |
+| `start=28, count=1` | Per-draw | World-space offset |
+
+Confirmed: c8-c15 values at draw time are `[-0.0064, 0.0329, 0, 0]` etc. — these are NOT camera/view matrices.
+
+### Ground Truth: Vertex Declarations
+
+| Declaration | Stride | Elements | Used for |
+|------------|--------|----------|----------|
+| SHORT4 + D3DCOLOR + SHORT2 + SHORT2 | 20 bytes | POSITION SHORT4, COLOR, TEXCOORD0, TEXCOORD1 | World geometry (~90% of draws) |
+| FLOAT3 + D3DCOLOR + FLOAT2 | 24 bytes | POSITION FLOAT3, COLOR, TEXCOORD0 | Overlays, some character draws |
+
+Neither declaration has NORMAL elements. Remix must generate normals from face geometry.
+
+### Ground Truth: Draw Statistics (per frame)
+
+- 3187 total draws, all DrawIndexedPrimitive
+- 1380 fullscreen quads (43% of draws)
+- 548 opaque draws
+- 2636 alpha-tested
+- 1778 alpha-blended (SRCALPHA, INVSRCALPHA)
+- 1296 SetTransform calls (from dxwrapper D3D8→D3D9 conversion)
+- 3187 SetMaterial calls
+- ~70K SetTextureStageState calls
+- ~19K SetRenderState calls
+- 6 unique vertex shaders total
+
+### Ground Truth: Game Memory Matrices
+
+The proxy reads View and Projection from fixed game memory addresses. These ARE valid:
+
+- `TRL_VIEW_ADDR = 0x010FC780` — contains a real camera View matrix (rotation + large translation like 11525, 58449, -21945)
+- `TRL_PROJ_ADDR = 0x01002530` — contains a standard D3D perspective projection: `[2.0, 0, 0, 0; 0, -2.28, 0, 0; 0, 0, 1.0, 1.0; 0, 0, -16.0, 0]`
+
+The game-memory decomposition `World = WVP * (View * Proj)^-1` produces correct near-identity rotation with world-space translation for per-object World matrices.
+
+### Ground Truth: dxwrapper SetTransform Patterns
+
+dxwrapper's D3D8→D3D9 conversion calls SetTransform with these patterns:
+
+- **3D geometry**: View=identity, Proj=identity, World=WVP-combined
+- **Overlay draws**: View=identity, Proj=real projection, World=identity
+
+dxwrapper NEVER provides a real View matrix via SetTransform. It always uses identity.
+
+### What Worked This Session
+
+#### Working Result 4: Lara with RTX Path Tracing
+
+**Build**: Game-memory decomposition + intercepted SetTransform/SetRenderState/SetMaterial/SetTextureStageState + per-draw wvpDirty=1 + per-draw FFP_SetupLighting + fallbackLightMode=1
+
+**What was visible**: Lara's character model rendered with proper path-traced rim lighting and correct shading. HUD elements (health bar, weapon icon, ammo) visible.
+
+**What was wrong**: World geometry (walls, floors, ceiling) appeared as dark surfaces. Texture detail faintly visible but lighting was near-zero on environment.
+
+**Proxy settings at this point**:
+- SetTransform (slot 44): intercepted, blocked during FFP
+- SetRenderState (slot 57): intercepted, blocks LIGHTING/CULLMODE/COLORVERTEX/SPECULARENABLE/AMBIENT/FOGENABLE during FFP
+- SetMaterial (slot 49): intercepted, blocked during FFP
+- SetTextureStageState (slot 67): intercepted, blocked during FFP
+- FFP_Engage: forces wvpDirty=1, runs FFP_SetupLighting every draw
+- FFP_ApplyTransforms: reads gameView/gameProj from memory, derives World = WVP * VP^-1
+
+**rtx.conf at this point**:
+- `rtx.fusedWorldViewMode = 0`
+- `rtx.fallbackLightMode = 1` (distant light)
+- `rtx.fallbackLightRadiance = 5.0 5.0 5.0`
+- `rtx.zUp = False`
+
+**Interpretation**: Transform decomposition is mathematically correct. The darkness on world geometry may be caused by: (a) ~1380 fullscreen quad draws creating camera-space geometry that blocks path-traced light, (b) insufficient fallback light intensity, or (c) texture/material classification issues.
+
+### What Failed This Session
+
+#### Failure 6: Screen-Space Draw Detection via c3 Heuristic
+
+**Attempted**: Check `|c3.x| + |c3.y| + |c3.w| < 1.0` to detect projection-only WVP (screen-space draws). If detected, pass through with original shaders.
+
+**Result**: Diagonal stripe artifacts. Remix misinterpreted shader-based draws, producing corrupted vertex data patterns across the screen.
+
+**Lesson**: Cannot pass screen-space draws through with their original vertex shaders when Remix is active. Remix tries to capture vertex data from these draws and misinterprets it.
+
+#### Failure 7: Skipping Screen-Space Draws Entirely
+
+**Attempted**: Same c3 heuristic, but skip the draw entirely (`hr = 0; goto diag;`) instead of passing through.
+
+**Result**: Rendering got worse — most visible geometry disappeared. The c3 heuristic was too aggressive and incorrectly classified some real 3D geometry draws as screen-space.
+
+**Lesson**: The c3 column of WVP is NOT a reliable screen-space detector for TRL. Some 3D geometry has small c3.w values.
+
+#### Failure 8: fallbackLightMode=2 (Point Light) with Radiance=10.0
+
+**Attempted**: Changed from distant light (mode 1) to point light (mode 2) with higher radiance.
+
+**Result**: No visible improvement. World geometry still dark.
+
+### Current State of the Proxy (2026-03-17)
+
+The deployed proxy is the "Lara working" build (reverted screen-space detection). Key interceptors are active (SetTransform, SetRenderState, SetMaterial, SetTextureStageState blocked during FFP). Per-draw transform and lighting reapplication.
+
+### Config Conflict Alert
+
+The handoff document previously recorded `rtx.fusedWorldViewMode = 1` in user.conf. The current rtx.conf has `rtx.fusedWorldViewMode = 0`. These have different meanings for Remix:
+- **0**: None — Remix treats World/View/Projection independently
+- **1**: View fused into World — Remix assumes World contains World*View combined
+- **2**: World fused into View — Remix assumes View contains World*View combined
+
+With the game-memory decomposition approach (separate W/V/P), mode 0 is correct. With the backup's WVP-only fallback (View=id, Proj=WVP, World=id), mode 0 is also what was being used. This setting has NOT been systematically tested across transform models.
+
+#### Working Result 5: Full Scene Geometry (World + Lara) — WVP-as-World + fusedWorldViewMode=1
+
+**Build**: WVP placed into D3DTS_WORLD, identity View/Projection. All interceptors active. Per-draw reapplication.
+
+**rtx.conf**: `rtx.fusedWorldViewMode = 1`, `rtx.fallbackLightMode = 2`, `rtx.fallbackLightRadiance = 10.0 10.0 10.0`
+
+**What was visible**: FULL SCENE — Lara, rock walls, ground, vines, rope, wooden structures, cave geometry. HUD visible. All geometry correctly positioned. First time both character AND world render together.
+
+**What was wrong**: Path tracing not engaging. Scene renders as flat rasterized FFP output (no shadows, no reflections, no GI). Remix hooks but ray tracing appears inactive despite `rtx.enableRaytracing = True`.
+
+**THE WINNING TRANSFORM MODEL**:
+- `D3DTS_WORLD = WVP` (transposed from c0-c3 VS constants)
+- `D3DTS_VIEW = identity`
+- `D3DTS_PROJECTION = identity`
+- `rtx.fusedWorldViewMode = 1` (tells Remix World contains World*View)
+
+This is the simplest possible approach and it WORKS for geometry placement.
+
+### Open Questions for Next Session
+
+1. **Why is world geometry dark when Lara is lit?** Both use the same FFP path. The difference: Lara's WVP ≈ Projection (vertices pre-transformed to camera space); world geometry WVP includes full World*View*Projection. Could the World derivation produce normals/positions that block light?
+
+2. **Are fullscreen quads creating blocking geometry?** 43% of draws are fullscreen quads. When FFP-converted, their World = View^-1 (camera-space geometry placed in world). These could cast shadows or occlude world surfaces. Need a reliable way to detect and handle them without the c3 heuristic.
+
+3. **Would the backup's simpler WVP-only fallback work better?** View=identity, Proj=WVP, World=identity — no decomposition. Combined with `rtx.fusedWorldViewMode = 1`, Remix might handle this better than manual decomposition.
+
+4. **Is WD_SetRenderState blocking too aggressively?** Alpha test/blend state might be frozen at wrong values, making some surfaces invisible. The proxy blocks changes to 9 render states during FFP but doesn't explicitly set alpha test/blend state.
+
+5. **Does `DisableNormalMaps=1` affect this?** Currently enabled in proxy.ini but the proxy's SetTextureStageState blocking might conflict.
+
+## 5. Experimental Backup Catalog
+
+All test artifacts live in the game directory under `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\Reverse\`. Organization rules are in `Reverse/RULES.md`.
+
+| Subfolder | Contents |
+|-----------|----------|
+| `Reverse/tests/` | Each test: `YYYYMMDD-HHMMSS-<Yes|No>-<Description>/` with d3d9.dll + proxy.ini + logs |
+| `Reverse/builds/` | Old proxy DLL versions with timestamps |
+| `Reverse/configs/` | Old proxy.ini, user.conf, rtx.conf backups |
+| `Reverse/logs/ffp-proxy/` | FFP proxy logs |
+| `Reverse/logs/dx-trace/` | DX9 tracer JSONL captures |
+| `Reverse/logs/remix-runtime/` | Remix runtime logs (metrics, NRC) |
+
+**Workflow**: Before deploying a new build, move the current d3d9.dll + proxy.ini + ffp_proxy.log into `Reverse/tests/` with the test result (Yes/No) and a description. Always check existing tests here before trying an approach — it may already have been tested.
+
+This section catalogs every experiment so future sessions don't repeat failed approaches.
+
+### Source Code Branches
+
+Three distinct proxy code branches were identified across all backups:
+
+| Branch | Location | DLL Size | Transform Strategy |
+|--------|----------|----------|-------------------|
+| A: Passthrough/fused-WVP | `patches/trl_legend/` | ~14KB | c0=WVP as World, View=id, Proj=id |
+| B: Advanced decomposition | `patches/trl_legend_ffp/` | ~16KB | WVP@c0, World@c4, View@c8, ViewProj@c12, derives P from inverses |
+| C: Experimental fused-WVP | `patches/TombRaiderLegend/` | ~18KB | WVP@c0, Proj@c4, View@c8, WorldView@c12, derives World from inversion |
+
+### Backup Experiment Results
+
+| # | Backup | Date | Result | DLL | Branch | proxy.ini Features |
+|---|--------|------|--------|-----|--------|-------------------|
+| 1 | `LIGHTBLUE2` | Mar 14 22:19 | LIGHT BLUE | 14,848 | A (passthrough) | DisableNormalMaps=1 |
+| 2 | `ffFLASHINGLIGHTS` | Mar 14 22:26 | FLASHING LIGHTS | 16,384 | B | DisableNormalMaps=1, ForceFfpSkinned=1, ForceFfpNoTexcoord=1, FrustumPatch=1 |
+| 3 | `LIGHTBLUE` | Mar 15 02:01 | LIGHT BLUE | 16,384 | B | Same as #2 (identical) |
+| 4 | **`FIXEDFUNCTION`** | **Mar 15 03:45** | **WORKING** | **15,872** | **B** | **ALL features OFF** (DisableNormalMaps=0, ForceFfpSkinned=0, ForceFfpNoTexcoord=0, FrustumPatch=0) |
+| 5 | `FLASHINGLIGHTS2` | Mar 15 03:48 | FLASHING LIGHTS | 20,480 | B (modified) | Same minimal as #4 |
+| 6 | `BROKEN` (1st) | Mar 15 03:52 | BROKEN | 16,896 | B (modified) | Same minimal as #4 |
+| 7 | `BROKEN` (2nd) | Mar 15 04:02 | BROKEN | 17,920 | B (modified) | Same minimal as #4 |
+| 8 | `agent-restoreTRIANGLESLICES` | Mar 15 15:17 | TRIANGLE SLICES | 20,992 | B (agent-restored) | DisableNormalMaps=0, others OFF |
+| 9 | `agent-passthroughLIGHTBLUE3` | Mar 15 15:22 | LIGHT BLUE | 13,824 | Pure passthrough | DisableNormalMaps=1 |
+| 10 | **`agent-worldviewFIXEDFUNCTION2`** | **Mar 15 15:29** | **WORKING** | **18,944** | **B variant** | **ALL features OFF** + `rtx.conf` with fusedWorldViewMode=1, zUp=True, texture hash lists |
+| 11 | `TRIANGLESLICES` | Mar 15 15:40 | TRIANGLE SLICES | 19,968 | B variant | DisableNormalMaps=0, others OFF |
+
+### Visual Outcome Root Causes
+
+**LIGHT BLUE** (backups #1, #3, #9): Remix hooks but receives no usable FFP geometry. Causes:
+- Pure passthrough DLL (no FFP conversion attempted) — Remix shows default blue void
+- Or advanced INI features (FrustumPatch, ForceFfpSkinned, ForceFfpNoTexcoord) interfere with draw routing
+
+**FLASHING LIGHTS** (backups #2, #5): FFP active (`routedToFfp=1`) but with degenerate View/ViewProj matrices. Log from #5 shows c8-c11 had repeating values like `0.01, 0.19, 0.00, 0.00` across all rows — NOT valid camera matrices. The rapid transform oscillation causes visual strobing.
+
+**BROKEN** (backups #6, #7): FFP eligibility failing. #6 log shows `Diag passthrough: 1` with `routedToFfp=0` on all draws — proxy logged state but did NOT convert to FFP. #7 shows `routedToFfp=0` even with passthrough=0 — eligibility criteria had a bug.
+
+**TRIANGLE SLICES** (backups #8, #11): Partial/corrupted FFP transform. Vertex declaration stride or stream handling wrong, or incomplete matrix decomposition produces sheared geometry fragments.
+
+**FIXEDFUNCTION** (backups #4, #10): Correct FFP rendering. See next section.
+
+### What Made FIXEDFUNCTION Work
+
+Both working backups share these properties:
+
+1. **All proxy.ini advanced features OFF** — no FrustumPatch, no ForceFfpSkinned, no ForceFfpNoTexcoord, no DisableNormalMaps
+2. **Branch B code** (advanced decomposition from `trl_legend_ffp`) — NOT the simple passthrough or the later experimental branch
+3. **Log captured deep into gameplay** (drawCall ~320K) — c0-c3 had real 3D WVP matrices with large translations, c8-c15 had small but non-zero values
+4. **FIXEDFUNCTION2 additionally had** `rtx.conf` with `rtx.fusedWorldViewMode=1`, `rtx.zUp=True`, and curated texture hash classifications
+
+### proxy.ini: Features ON = Broken
+
+This is the single clearest signal from all 11 experiments:
+
+| proxy.ini Setting | When ON | When OFF |
+|-------------------|---------|----------|
+| `FrustumPatch=1` | LIGHTBLUE, FLASHINGLIGHTS | **FIXEDFUNCTION** |
+| `ForceFfpSkinned=1` | LIGHTBLUE, FLASHINGLIGHTS | **FIXEDFUNCTION** |
+| `ForceFfpNoTexcoord=1` | LIGHTBLUE, FLASHINGLIGHTS | **FIXEDFUNCTION** |
+| `DisableNormalMaps=1` | LIGHTBLUE (passthrough) | **FIXEDFUNCTION** |
+
+**Rule: Start with ALL features OFF. Enable only after base FFP is proven working.**
+
+### Timestamped Log Evolution
+
+The base directory contains 10 timestamped FFP proxy logs showing how the eligibility logic was iterated:
+
+| Log | Timestamp | Key Finding |
+|-----|-----------|-------------|
+| `pre-211138` | Mar 15 20:07 | Simple DIP logging, no FFP routing fields |
+| `pre-212108` | Mar 15 21:14 | Added wvp/world/view/viewProj labels. c8-c11 had real values (0.01-0.11) |
+| `pre-212611` | Mar 15 21:22 | c8-c11 = ALL ZEROS, c12-c15 = ALL ZEROS (captured during menus) |
+| `pre-223646` | Mar 15 22:32 | Boot only, no DIP data |
+| `pre-224045` | Mar 15 22:37 | Added `rigidDecl`, `canUseFfp`, `usedFfp`. canUseFfp=0 because viewProjValid required but c8-c15 zeros |
+| `pre-224614` | Mar 15 22:41 | Code changed: canUseFfp=1, usedFfp=1 despite zero c8-c15 |
+| `pre-230757` | Mar 15 22:53 | Added `viewBlockNonZero` tracking. viewProjValid=0 → canUseFfp=0 |
+| `pre-231238` | Mar 15 23:08 | Loosened: canUseFfp=1 even with viewProjValid=0 |
+| `pre-004753` | Mar 17 00:47 | Renamed to `start0Seen`/`projectionReady`/`rigidMode`. FFP triggers when c0 written once |
+| current | Mar 17 18:19 | Boot only, no DIP data |
+
+**Key insight**: Most failed logs captured during menus/boot (5s or 50s delay), when c0-c3 has projection-like UI matrices and c8-c15 are zeros. The FIXEDFUNCTION success captured deep into 3D gameplay. The 50-second diagnostic delay is critical — too short catches menus, too long misses early geometry.
+
+### Capture Timing Problem
+
+| Backup | Draw Count at Capture | c0-c3 Content | c8-c15 Content | Outcome |
+|--------|-----------------------|---------------|----------------|---------|
+| FIXEDFUNCTION | ~320,000 | Real 3D WVP (large translations) | Small non-zero (0.01-0.19) | WORKING |
+| FLASHINGLIGHTS2 | ~13,000 | WVP present | Degenerate repeating values | FLASHING |
+| BROKEN (both) | ~12,000-13,000 | Projection-like (UI) | All zeros | BROKEN |
+
+**Rule: Logs captured during menus are misleading. Always capture after entering a 3D level with visible world geometry.**
+
+### Lessons for Future Sessions
+
+1. **proxy.ini features are stability hazards** — FrustumPatch, ForceFfpSkinned, ForceFfpNoTexcoord all correlated with failure. Use only after base FFP works.
+2. **c8-c15 are NOT view/projection matrices** — confirmed by CTAB analysis (Session 2026-03-17). They are fog, bend, and lighting constants. Previous register mapping assumptions were wrong.
+3. **DLL size correlates with code complexity** — 13-15KB = passthrough/clean, 17-21KB = experimental/modified. Larger DLLs didn't improve results.
+4. **The winning formula from FIXEDFUNCTION2** was: Branch B code + all features OFF + `rtx.fusedWorldViewMode=1` + `rtx.zUp=True` + curated texture hashes.
+5. **The later session (2026-03-17) found an even simpler winning model**: WVP→D3DTS_WORLD, identity View/Proj, fusedWorldViewMode=1. This supersedes the Branch B decomposition approach.
+
+## 6. Session 2026-03-17 (Evening): Hash Stability + Culling Removal Build
+
+### Goal
+
+Stable Remix hashes so placed lights stay fixed in world space when camera moves, and full culling removal so geometry is visible from all angles (360 around a placed light).
+
+### Problem with Previous WVP-as-World Approach
+
+Working Result 5 put WVP into D3DTS_WORLD with identity View/Projection and fusedWorldViewMode=1. This got full scene geometry visible but:
+- **No path tracing** — Remix couldn't determine camera info because Projection was baked into World
+- **Unstable hashes** — WVP changes every frame with camera, so every object gets a new hash when camera moves
+
+### Changes Made
+
+#### 1. FFP_ApplyTransforms: Full W/V/P Decomposition
+
+Reads View and Projection from game memory at fixed addresses, decomposes WVP into separate matrices:
+
+```
+View from 0x010FC780 (row-major, updated by game per frame)
+Proj from 0x01002530 (row-major, standard D3D perspective)
+VP = View * Proj
+World = WVP * inverse(VP)
+```
+
+Sets:
+- `D3DTS_WORLD = World` (per-object, stable across camera movement)
+- `D3DTS_VIEW = gameView` (camera transform from game memory)
+- `D3DTS_PROJECTION = gameProj` (perspective projection from game memory)
+
+Falls back to WVP-as-World if VP is not invertible (e.g. during menus).
+
+#### 2. Fullscreen Quad Skip
+
+43% of draws were fullscreen quads (primCount<=2, numVerts<=6). When FFP-converted with decomposed transforms, these create world-space blocking planes that occlude path-traced light. Now passed through with original shaders instead of FFP-converting.
+
+#### 3. Global D3DCULL_NONE
+
+Previously D3DCULL_NONE was only forced during FFP mode. Now ALL SetRenderState(CULLMODE) calls are intercepted and forced to D3DCULL_NONE regardless of FFP state. Combined with the existing in-memory patches:
+- Frustum threshold at 0x00EFDD64 set to 1e30
+- Cull-mode conditional at 0x0040EEA7 patched to always render
+
+#### 4. rtx.conf Changes
+
+- `rtx.fusedWorldViewMode = 0` (was 1) — Remix treats W/V/P independently since we provide proper separation
+- `rtx.fallbackLightMode = 1` (was 0) — distant fallback light so scene isn't pitch black
+- `rtx.fallbackLightRadiance = 5.0 5.0 5.0` — reasonable brightness for initial testing
+
+#### 5. proxy.ini (All Features OFF)
+
+```ini
+[Remix]
+Enabled=1
+DLLName=d3d9.dll.bak
+
+[FFP]
+AlbedoStage=0
+DisableNormalMaps=0
+ForceFfpSkinned=0
+ForceFfpNoTexcoord=0
+FrustumPatch=0
+```
+
+### Deployment State
+
+- `d3d9.dll` = 19,456 bytes (FFP proxy with decomposition)
+- `d3d9.dll.bak` = d3d9_remix.dll (Remix bridge client, 2MB)
+- `proxy.ini` = all features OFF
+- `rtx.conf` = fusedWorldViewMode=0, fallbackLightMode=1
+- Source: `patches/trl_legend_ffp/proxy/d3d9_device.c`
+
+### Expected Behavior
+
+- Remix receives proper World/View/Projection per draw
+- Per-object World matrices are camera-independent → stable hashes
+- Placed lights should stay fixed when camera moves
+- All backface culling disabled → geometry visible from all angles
+- Fullscreen quads pass through with shaders → no blocking geometry
+
+### Test Instructions
+
+1. Launch TRL, load into Bolivia (or any 3D level with visible geometry)
+2. Wait 20+ seconds for proxy to initialize
+3. Check if Remix renders path-traced geometry
+4. In Remix developer menu: place a stage light on a piece of world geometry
+5. Move Lara 360 degrees around the light — it should stay fixed in world space
+6. If light moves with camera → decomposition or fusedWorldViewMode wrong
+7. If scene is dark → check fallbackLightMode/radiance values
+8. If geometry missing → check ffp_proxy.log after game exit
+
+### Result: PATH TRACING WORKING (Working Result 6)
+
+The shader-passthrough + transform override approach succeeded. Both screenshots confirm:
+- Hash visualization shows distinct per-object hashes (colorful view)
+- Path-traced rendering with real stone textures, shadows, ambient occlusion on world geometry
+- Lara properly lit with path tracing
+- Vegetation (ferns, plants) visible and textured
+- Rock walls, ground, all world geometry present
+
+**THE WINNING APPROACH — Shader Passthrough + Transform Override:**
+
+The key insight: **don't convert to FFP at all**. The game's vertex shaders handle SHORT4 position transforms correctly. Remix's vertex capture (`rtx.useVertexCapture=True`) intercepts the post-VS output and uses the SetTransform W/V/P for world-space placement + camera setup.
+
+What the proxy does:
+1. **Keeps all shaders active** — does NOT null vertex or pixel shaders
+2. **Overrides SetTransform** — sets decomposed World, gameView, gameProj before each draw
+3. **Blocks dxwrapper's SetTransform** during active draws (dxwrapper sets identity V/P which would confuse Remix)
+4. **Skips fullscreen quads** — `pc <= 2 && nv <= 6` draws are dropped entirely
+5. **Forces D3DCULL_NONE** globally on all SetRenderState(CULLMODE) calls
+6. **Applies in-memory patches** — frustum threshold at 0x00EFDD64 = 1e30, cull mode patch at 0x0040EEA7
+
+Transform math:
+```
+gameView from 0x010FC780 (row-major View matrix from game memory)
+gameProj from 0x01002530 (row-major Projection matrix from game memory)
+VP = gameView * gameProj (cached once per BeginScene)
+VP_inv = inverse(VP) (cached once per BeginScene)
+World = transpose(vsConst[c0-c3]) * VP_inv (per draw)
+
+D3DTS_WORLD = World (per-object, camera-independent)
+D3DTS_VIEW = gameView (camera transform)
+D3DTS_PROJECTION = gameProj (perspective projection)
+```
+
+Critical rtx.conf settings:
+- `rtx.fusedWorldViewMode = 0` (W/V/P treated independently — REQUIRED for path tracing)
+- `rtx.useVertexCapture = True` (captures post-VS positions)
+- `rtx.zUp = True`
+- `rtx.enableRaytracing = True`
+
+proxy.ini settings (ALL features OFF):
+```
+AlbedoStage=0, DisableNormalMaps=0, ForceFfpSkinned=0, ForceFfpNoTexcoord=0, FrustumPatch=0
+```
+
+**Why previous FFP approaches failed:**
+- SHORT4 vertex positions cannot be interpreted by Remix's FFP vertex capture
+- Nulling shaders removed the only code that correctly transforms SHORT4 → clip space
+- fusedWorldViewMode=1 prevented path tracing from engaging entirely
+- Full decomposition with fusedWorldViewMode=0 produced noisy/dark world because FFP couldn't handle SHORT4
+
+**Why this approach works:**
+- Game's vertex shader handles SHORT4 → clip space natively
+- Remix vertex capture intercepts post-VS output (already in clip space)
+- Remix uses SetTransform W/V/P to reverse-map clip → world space for ray tracing
+- Per-object World is camera-independent → stable hashes
+- Proper View/Proj give Remix correct camera for ray casting
+
+### Remaining Issues
+
+- **Wireframe grid lines on ground** — white lines at terrain patch/polygon boundaries. Attempted fixes: (1) `mat4_quantize` 1/256 grid on World matrix — caused visible grid artifacts, removed. (2) Suppressing line primitive draws (pt==2, pt==3) — had no effect, lines are NOT from line primitives. (3) Forcing D3DRS_FILLMODE=D3DFILL_SOLID before every draw call on the real device — still persists. The wireframe appears to be a Remix-side rendering artifact at mesh seams/boundaries under path tracing. May need `rtx.smoothNormalsTextures` with ground texture hashes, adjusting Remix denoiser settings, or using Remix geometry merging.
+- **Hash instability** — `mat4_quantize` was removed. Replaced with cross-frame VP inverse caching (epsilon 1e-4 comparison: reuse previous frame's VP inverse when camera hasn't moved). This should stabilize hashes for static camera + static objects. If instability persists, the source may be vertex buffer contents or Remix hashing on additional state.
+- **Lara outline in freecam** — when using Remix freecam, a ghost outline of Lara follows the camera center. Likely a game-side silhouette/outline shader effect. The game renders Lara relative to its internal camera, but Remix re-projects from the freecam position. Need to identify the outline draw's texture hash and add to `rtx.ignoreTextures`.
+- **Alpha geometry (plants, hair tips)** — some small alpha-tested geometry wasn't interactable. The quad skip filter (`pc<=2 && nv<=6`) was catching small alpha geometry like leaves/hair. Removed the quad skip entirely to allow all textured draws through.
+- **Stage light USD mod** — placed at `rtx-remix/mods/stagelight/mod.usda`. Red SphereLight (intensity=400) attached to mesh `46C470FAE2CCDB3E`. If the light doesn't appear, the mesh prim path may need adjustment via Remix DevTools.
+- Some dark areas may need additional light sources via Remix toolkit
+
+### If This Fails
+
+- **Black/dark scene**: Increase `rtx.fallbackLightRadiance` or try `fallbackLightMode = 2` (point light)
+- **Light moves with camera**: Decomposition math wrong or game-memory addresses shifted. Re-verify View/Proj addresses with livetools
+- **No geometry at all**: VP inverse failing during gameplay. Check ffp_proxy.log for "fallback" messages
+- **Diagonal stripes/corruption**: Fullscreen quad threshold too aggressive. Increase from `pc<=2 && nv<=6` to `pc<=4 && nv<=8`
+- **Partial geometry**: Some draws not meeting FFP eligibility. Check if hasTexcoord or stride check is filtering real geometry

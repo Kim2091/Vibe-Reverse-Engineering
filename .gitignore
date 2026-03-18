@@ -15,8 +15,15 @@ venv/
 *.pdb
 *.ilk
 
-# Generated patch output (asi_patcher)
-patches/
+# Generated patch output (asi_patcher) — except TRL proxy source
+patches/*
+!patches/trl_legend_ffp/
+patches/trl_legend_ffp/*
+!patches/trl_legend_ffp/proxy/
+patches/trl_legend_ffp/proxy/*.dll
+patches/trl_legend_ffp/proxy/*.obj
+patches/trl_legend_ffp/proxy/*.lib
+patches/trl_legend_ffp/proxy/*.exp
 
 # D3D9 tracer runtime artifacts
 dxtrace_capture.trigger
@@ -29,6 +36,7 @@ livetools/.state.json
 # IDE / Editor
 .vs/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 *~

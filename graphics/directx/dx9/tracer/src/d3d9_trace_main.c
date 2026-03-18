@@ -19,6 +19,9 @@
 
 int g_cfgCaptureFrames = 2;
 int g_cfgCaptureInit   = 1;
+#define DXTRACE_BOUNDARY_PRESENT  17
+#define DXTRACE_BOUNDARY_ENDSCENE 42
+int g_cfgFrameBoundarySlot = DXTRACE_BOUNDARY_PRESENT;
 
 /* ---- Logging ---- */
 
@@ -82,6 +85,8 @@ __declspec(dllexport) void* __stdcall Direct3DCreate9(unsigned int SDKVersion) {
     char pathBuf[MAX_PATH];
     char iniBuf[MAX_PATH];
     char chainDLL[MAX_PATH];
+    char frameBoundary[32];
+    const char *boundaryName;
     void *pReal;
 
     if (!g_realD3D9) {
@@ -92,11 +97,20 @@ __declspec(dllexport) void* __stdcall Direct3DCreate9(unsigned int SDKVersion) {
 
         g_cfgCaptureFrames = GetPrivateProfileIntA("Trace", "CaptureFrames", 2, iniBuf);
         g_cfgCaptureInit   = GetPrivateProfileIntA("Trace", "CaptureInit", 1, iniBuf);
+        GetPrivateProfileStringA("Trace", "FrameBoundary", "Present",
+            frameBoundary, sizeof(frameBoundary), iniBuf);
+        if (frameBoundary[0] == 'E' || frameBoundary[0] == 'e') {
+            g_cfgFrameBoundarySlot = DXTRACE_BOUNDARY_ENDSCENE;
+            boundaryName = "EndScene";
+        } else {
+            g_cfgFrameBoundarySlot = DXTRACE_BOUNDARY_PRESENT;
+            boundaryName = "Present";
+        }
 
         {
             char buf[128];
-            sprintf(buf, "Config: CaptureFrames=%d CaptureInit=%d\r\n",
-                    g_cfgCaptureFrames, g_cfgCaptureInit);
+            sprintf(buf, "Config: CaptureFrames=%d CaptureInit=%d FrameBoundary=%s\r\n",
+                    g_cfgCaptureFrames, g_cfgCaptureInit, boundaryName);
             log_str(buf);
         }
 
