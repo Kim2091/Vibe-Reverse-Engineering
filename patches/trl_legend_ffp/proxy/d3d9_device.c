@@ -399,6 +399,7 @@ typedef struct WrappedDevice {
     unsigned int ffpDraws;
     unsigned int skinnedDraws;
     unsigned int quadSkips;
+    unsigned int screenSpaceSkips;
     unsigned int shaderDraws;
     unsigned int decomposedCount;
     unsigned int fallbackCount;
@@ -583,6 +584,19 @@ static int mat4_inverse(float *dst, const float *m) {
     det = 1.0f / det;
     for (i = 0; i < 16; i++) dst[i] = inv[i] * det;
     return 1;
+}
+
+/*
+ * Detect screen-space draws: WVP is a pure projection matrix (no world/view
+ * rotation or translation). In raw VS constants (column-major), a pure
+ * projection has zero cross-terms in columns 0 and 1:
+ *   col0 = [sx, 0, 0, 0]   col1 = [0, sy, 0, 0]
+ * World geometry always has non-zero cross-terms from the View rotation.
+ */
+static int is_screen_space_wvp(float *vsConst) {
+    float *wvp = &vsConst[VS_REG_WVP_START * 4];
+    return (wvp[1] == 0.0f && wvp[2] == 0.0f &&
+            wvp[4] == 0.0f && wvp[6] == 0.0f);
 }
 
 /*
@@ -982,6 +996,7 @@ static int __stdcall WD_Present(WrappedDevice *self, void *a, void *b, void *c, 
         log_int("    FFP draws:     ", self->ffpDraws);
         log_int("    Skinned draws: ", self->skinnedDraws);
         log_int("    Quad skips:    ", self->quadSkips);
+        log_int("    Screen skips:  ", self->screenSpaceSkips);
         log_int("    Shader draws:  ", self->shaderDraws);
         log_int("    Decomposed:    ", self->decomposedCount);
         log_int("    Fallback:      ", self->fallbackCount);
@@ -1003,6 +1018,7 @@ static int __stdcall WD_Present(WrappedDevice *self, void *a, void *b, void *c, 
     self->ffpDraws = 0;
     self->skinnedDraws = 0;
     self->quadSkips = 0;
+    self->screenSpaceSkips = 0;
     self->shaderDraws = 0;
     self->decomposedCount = 0;
     self->fallbackCount = 0;
@@ -1155,7 +1171,14 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
         pt == 4 &&
         self->streamStride[0] >= 12) {
 
-        if (self->curDeclIsSkinned) {
+        if (is_screen_space_wvp(self->vsConst)) {
+            /* Screen-space effect (fog/shadow/outline overlay): WVP is a pure
+             * projection with identity world/view. Suppress — path tracing
+             * replaces these rasterization-era effects, and FFP-converting
+             * them places screen geometry at the camera position. */
+            self->screenSpaceSkips++;
+            return 0;
+        } else if (self->curDeclIsSkinned) {
             /* Skinned mesh: apply transforms for Remix, draw with shaders */
             FFP_Engage(self);
             hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
@@ -1198,9 +1221,10 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
         /* Determine route taken for this draw */
         const char *route = "SHADER";
         if (self->wvpValid && self->curDeclHasTexcoord && pt == 4 && self->streamStride[0] >= 12) {
-            if (self->curDeclIsSkinned)      route = "SKINNED";
-            else if (pc <= 2 && nv <= 6)     route = "QUAD_SKIP";
-            else                             route = "FFP";
+            if (is_screen_space_wvp(self->vsConst)) route = "SCREEN_SKIP";
+            else if (self->curDeclIsSkinned)         route = "SKINNED";
+            else if (pc <= 2 && nv <= 6)             route = "QUAD_SKIP";
+            else                                     route = "FFP";
         }
 
         log_int("  DIP #", self->drawCallCount);
