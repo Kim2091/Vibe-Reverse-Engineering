@@ -266,6 +266,14 @@ These tools find references via three mechanisms:
 
 If you suspect a reference exists but the tool doesn't find it, the address might be computed at runtime (e.g., base + offset in a register), loaded from a table, or assembled across multiple instructions. In those cases, try `search.py pattern` with the address bytes directly, or use `livetools memwatch` to catch runtime access.
 
+### `livetools` -- static vs runtime addresses
+
+**x86 games without ASLR** (most 32-bit games): the PE preferred base matches the runtime load address. Addresses from `retools` can be passed directly to `livetools`.
+
+**DLLs and ASLR-enabled executables**: runtime base may differ. Run `python -m livetools modules --filter <name>` and compare against the PE's preferred base. If they differ: `runtime_addr = runtime_base + (static_addr - preferred_base)`.
+
+**Hook the game's CALL, not the DLL entry.** To trace a D3D9/API method, hook the `call [reg+offset]` instruction *in the game's .exe* (found via `xrefs.py` or `vtable.py calls`), NOT the function entry point inside the DLL. The game's call site has arguments on the stack in known positions; the DLL entry point may be wrapped by proxies and is shared across all callers.
+
 ## Project Workspace
 
 Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts. This folder is fair game -- create whatever you need:
@@ -358,7 +366,13 @@ Once you have addresses from these scripts, bring in the full RE toolset to unde
 
 The goal is to answer three questions. The tools and approaches below are illustrative — use whatever combination gives the clearest answer for the specific game.
 
-**Recommended first step**: Deploy the D3D9 tracer proxy (`graphics/directx/dx9/tracer/bin/`) to the application directory, capture 2 frames, then run `--shader-map` and `--const-provenance`. The shader disassembly includes CTAB headers with **named parameters** (e.g. `WorldViewProj c0 4`, `WorldView c4 3`, `FogValue c8 1`) which directly answer question #1 without any manual RE. Follow up with `--vtx-formats` for question #2 and `--render-passes` + `--pipeline-diagram` for question #3.
+**After static analysis, deploy the DX9 tracer before live tracing.** Run the analysis scripts first (fast offline scans), then deploy `graphics/directx/dx9/tracer/bin/d3d9.dll` + `proxy.ini` to the game directory, capture 2 frames (`python -m graphics.directx.dx9.tracer trigger --game-dir <DIR>`), and run:
+- `--shader-map` — CTAB names map registers to purpose (e.g. `WorldViewProj c0 4`), often answering question #1 outright
+- `--const-provenance` — which code set each constant per draw
+- `--vtx-formats` — answers question #2 (vertex formats + skinning detection)
+- `--render-passes` + `--pipeline-diagram` — answers question #3
+
+If the tracer gives you the register layout, use livetools only to fill gaps. If the game crashes with the tracer proxy, fall back to the livetools-based approach.
 
 **1. Which VS constant registers hold View, Projection, and World matrices?**
 - **Best**: `dx9tracer analyze --shader-map` — CTAB names map registers to their purpose directly (e.g. `WorldViewProj c0 4`, `BlendMatrices c0 64`)

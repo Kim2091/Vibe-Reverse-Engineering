@@ -256,6 +256,14 @@ Works exclusively with **MSVC-compiled** binaries that have RTTI enabled (`/GR`,
 
 These tools find references via absolute memory operands, immediate values (with `--imm` flag), and RIP-relative addressing. If you suspect a reference exists but the tool doesn't find it, the address might be computed at runtime. Try `search.py pattern` with the address bytes directly, or use `livetools memwatch`.
 
+#### `livetools` -- static vs runtime addresses
+
+**x86 games without ASLR** (most 32-bit games): the PE preferred base matches the runtime load address. Addresses from `retools` can be passed directly to `livetools`.
+
+**DLLs and ASLR-enabled executables**: runtime base may differ. Run `python -m livetools modules --filter <name>` and compare against the PE's preferred base. If they differ: `runtime_addr = runtime_base + (static_addr - preferred_base)`.
+
+**Hook the game's CALL, not the DLL entry.** To trace a D3D9/API method, hook the `call [reg+offset]` instruction *in the game's .exe* (found via `xrefs.py` or `vtable.py calls`), NOT the function entry point inside the DLL. The game's call site has arguments on the stack in known positions; the DLL entry point may be wrapped by proxies and is shared across all callers.
+
 ### Project Workspace
 
 Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts:

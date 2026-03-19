@@ -64,6 +64,26 @@ Key things to find:
 - What vertex declaration formats are used (BLENDWEIGHT/BLENDINDICES = skinning)
 - Where the main render loop / draw calls live
 
+### Step 1b: Capture with the DX9 Tracer (Before Live Analysis)
+
+Before jumping to livetools for manual tracing, deploy the D3D9 frame tracer — it answers most FFP questions from a single capture.
+
+1. Deploy `graphics/directx/dx9/tracer/bin/d3d9.dll` + `proxy.ini` to the game directory
+2. Launch the game, get to gameplay with visible geometry
+3. Trigger: `python -m graphics.directx.dx9.tracer trigger --game-dir <GAME_DIR>`
+4. Analyze:
+```bash
+python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map          # CTAB register names
+python -m graphics.directx.dx9.tracer analyze <JSONL> --const-provenance    # which code set each constant
+python -m graphics.directx.dx9.tracer analyze <JSONL> --vtx-formats         # vertex declarations
+python -m graphics.directx.dx9.tracer analyze <JSONL> --render-passes       # render target grouping
+python -m graphics.directx.dx9.tracer analyze <JSONL> --pipeline-diagram    # mermaid pipeline flowchart
+```
+
+`--shader-map` includes CTAB headers with named parameters (e.g. `WorldViewProj c0 4`). This often answers "which registers hold which matrices" directly without manual RE.
+
+If the tracer gives you the register layout, skip the dynamic approach in Step 2 and go straight to Step 3. Use livetools only to fill gaps the tracer didn't cover. If the game crashes with the tracer proxy, fall back to Step 2's dynamic approach.
+
 ### Step 2: Discover VS Constant Register Layout
 
 This is the **most critical** step. Determine which VS constant registers hold View, Projection, and World matrices.
@@ -212,6 +232,8 @@ python -m retools.decompiler <game.exe> <func_addr> --types patches/<project>/kb
 python -m livetools trace <SetVSConstF_call_addr> --count 50 \
     --read "[esp+8]:4:uint32; [esp+10]:4:uint32; *[esp+c]:64:float32"
 ```
+
+**The `<SetVSConstF_call_addr>` is the CALL instruction in the game's .exe** (from `find_vs_constants.py` or `xrefs.py`), NOT an address inside d3d9.dll. Hook the caller, not the callee.
 
 ### Count draw calls and find callers
 ```bash
