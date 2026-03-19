@@ -177,25 +177,6 @@ All analysis: `python -m graphics.directx.dx9.tracer analyze <JSONL> [OPTIONS]`
 | `--filter EXPR` | Filter records by field |
 | `--export-csv FILE` | Export raw records to CSV |
 
-#### Key Data Captured
-
-- **Every D3D9 call**: method name, slot, arguments, return value, full backtrace
-- **Shader bytecodes + disassembly**: CTAB with **named parameters** (e.g. `WorldViewProj`, `FogValue`), register mappings, full instructions
-- **Created object handles**: `CreateVertexDeclaration`/`CreateVertexShader`/`CreatePixelShader` output pointers for handle→bytecode linking
-- **Constant values**: float/int constant registers with source seq# tracking
-- **Matrices**: 4x4 float matrices from `SetTransform`/`MultiplyTransform`
-- **Vertex declarations**: full `D3DVERTEXELEMENT9` arrays with type/usage/stream decoded
-
-#### Source Files
-
-| Path | Role |
-|------|------|
-| `graphics/directx/dx9/tracer/cli.py` | CLI entry point (codegen, trigger, analyze) |
-| `graphics/directx/dx9/tracer/analyze.py` | Analysis engine (all `--*` options) |
-| `graphics/directx/dx9/tracer/d3d9_methods.py` | Single source of truth: method signatures, D3D9 enum constants, codegen |
-| `graphics/directx/dx9/tracer/src/` | C proxy DLL source (edit and rebuild for advanced use cases) |
-| `graphics/directx/dx9/tracer/bin/` | Pre-built d3d9.dll + proxy.ini (deploy directly) |
-
 ### Decision Guide
 
 - "What does this function do?" → `decompiler.py` (best), then `disasm.py` + `cfg.py`
@@ -220,18 +201,8 @@ All analysis: `python -m graphics.directx.dx9.tracer analyze <JSONL> [OPTIONS]`
 - "What are the actual register values?" → `livetools trace --read` or `bp` + `regs`
 - "How many draw calls happen?" → `livetools dipcnt`
 - "Who writes to this memory address?" → `livetools memwatch`
-- **"What does the game's full render frame look like?"** → `dx9tracer analyze --summary` + `--render-passes` + `--pipeline-diagram`
-- "What shaders does the game use and what constants do they need?" → `dx9tracer analyze --shader-map`
-- "Which code set a specific shader constant at draw time?" → `dx9tracer analyze --const-provenance` or `--const-provenance-draw N`
-- "What vertex formats does the game use?" → `dx9tracer analyze --vtx-formats`
-- "What is the full device state at a specific call?" → `dx9tracer analyze --state-at SEQ` or `--state-snapshot DRAW#` (by draw index, with CTAB names)
-- "How do registers change across draws? Which are per-object vs frame-global?" → `dx9tracer analyze --const-evolution vs:c0-c8`
-- "Does the game use SetTransform or only shader constants for matrices?" → `dx9tracer analyze --transform-calls`
-- "How do two draw calls differ?" → `dx9tracer analyze --diff-draws A B`
-- "What is the render target dependency graph?" → `dx9tracer analyze --rt-graph`
-- "Where is the render loop entry point?" → `dx9tracer analyze --render-loop --resolve-addrs <binary>`
-- "Which draw method (DIP/DP) and which shaders account for most draws?" → `dx9tracer analyze --classify-draws`
-- "Which state sets are redundant?" → `dx9tracer analyze --redundant`
+- "What does the game's full render frame look like?" → `dx9tracer analyze --summary` + `--render-passes`
+- "What shaders and constants does the game use?" → `dx9tracer analyze --shader-map` + `--const-provenance`
 
 ### Tool Caveats
 
@@ -256,6 +227,14 @@ Works exclusively with **MSVC-compiled** binaries that have RTTI enabled (`/GR`,
 
 These tools find references via absolute memory operands, immediate values (with `--imm` flag), and RIP-relative addressing. If you suspect a reference exists but the tool doesn't find it, the address might be computed at runtime. Try `search.py pattern` with the address bytes directly, or use `livetools memwatch`.
 
+#### `livetools` -- static vs runtime addresses
+
+**x86 games without ASLR** (most 32-bit games): the PE preferred base matches the runtime load address. Addresses from `retools` can be passed directly to `livetools`.
+
+**DLLs and ASLR-enabled executables**: runtime base may differ. Run `python -m livetools modules --filter <name>` and compare against the PE's preferred base. If they differ: `runtime_addr = runtime_base + (static_addr - preferred_base)`.
+
+**Hook the game's CALL, not the DLL entry.** To trace a D3D9/API method, hook the `call [reg+offset]` instruction *in the game's .exe* (found via `xrefs.py` or `vtable.py calls`), NOT the function entry point inside the DLL. The game's call site has arguments on the stack in known positions; the DLL entry point may be wrapped by proxies and is shared across all callers.
+
 ### Project Workspace
 
 Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts:
@@ -266,24 +245,35 @@ Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts:
 
 Create the project subfolder on first use.
 
+### Backups
+
+Before modifying project files (proxy source, kb.h, proxy.ini, build scripts, ASI specs), create a timestamped backup in `patches/<project>/backups/`:
+
+```
+patches/<project>/backups/YYYY-MM-DD_HHMM_<description>/
+```
+
+Copy ALL files being modified into the backup folder. The description should be a short slug of what the update does (e.g. `added-world-matrix-regs`, `fixed-albedo-stage`, `enabled-skinning`).
+
+Example:
+```
+patches/MyGame/backups/2026-03-19_1430_added-world-matrix-regs/
+├── d3d9_device.c
+├── proxy.ini
+└── kb.h
+```
+
+Create the backup BEFORE making changes so it captures the last known-good state. This applies to all development work — FFP proxy edits, ASI patch specs, build config changes, and any other project file modifications.
+
 ### Knowledge Base
 
 When reverse engineering a binary, maintain a knowledge base file (`.h`) that accumulates discoveries. Store in `patches/<project>/kb.h`.
 
-**Format:**
+**Format:** C types (no prefix), functions (`@` prefix), globals (`$` prefix):
 ```c
-// C type definitions (structs, enums, typedefs) -- no prefix
 struct Foo { int x; float y; };
-enum Mode { MODE_A=0, MODE_B=1 };
-typedef unsigned int Flags;
-
-// Function signatures at addresses -- @ prefix
 @ 0x401000 void __cdecl ProcessInput(int key);
-@ 0x402000 float __thiscall Object_GetValue(Object* this);
-
-// Global variables at addresses -- $ prefix
 $ 0x7C5548 Object* g_mainObject
-$ 0x7C554C Flags g_renderFlags
 ```
 
 **When to update the KB:**
@@ -299,84 +289,9 @@ $ 0x7C554C Flags g_renderFlags
 
 ## RTX Remix — DX9 FFP Porting
 
-Some DX9 games use custom vertex shaders that RTX Remix cannot inject into because Remix requires fixed-function pipeline (FFP) geometry for path-traced lighting and replaceable assets. The FFP template (`rtx_remix_tools/dx/dx9_ffp_template/`) is a D3D9 proxy DLL that intercepts `IDirect3DDevice9`, captures the game's VS constant matrices (View/Projection/World), NULLs the shaders on draw calls, applies the matrices through `SetTransform`, and chain-loads RTX Remix. Each game requires its own RE investigation.
+Some DX9 games use custom vertex shaders that RTX Remix cannot inject into. The FFP template (`rtx_remix_tools/dx/dx9_ffp_template/`) is a D3D9 proxy DLL that intercepts the device, captures VS constant matrices, NULLs shaders on draw calls, applies matrices through `SetTransform`, and chain-loads Remix.
 
-**When to use this workflow**: whenever the user mentions FFP rendering, DX9 shader-to-FFP conversion, RTX Remix compatibility, or building a `d3d9.dll` proxy for a game.
+**When to use**: user mentions FFP rendering, DX9 shader-to-FFP conversion, RTX Remix compatibility, or building a `d3d9.dll` proxy for a game. Load `@dx9-ffp-port` for the full porting workflow, file map, game-specific defines, and common pitfalls.
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable `ENABLE_SKINNING`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support.
-
-### File Map
-
-| Path | Role |
-|------|------|
-| `rtx_remix_tools/dx/dx9_ffp_template/proxy/d3d9_device.c` | Core FFP conversion — 119-method `IDirect3DDevice9` wrapper |
-| `rtx_remix_tools/dx/dx9_ffp_template/proxy/d3d9_main.c` | DLL entry, logging, Remix chain-loading, INI parsing |
-| `rtx_remix_tools/dx/dx9_ffp_template/proxy/d3d9_wrapper.c` | `IDirect3D9` wrapper — intercepts `CreateDevice` |
-| `rtx_remix_tools/dx/dx9_ffp_template/proxy/proxy.ini` | Runtime config: Remix chain load, albedo texture stage |
-| `rtx_remix_tools/dx/dx9_ffp_template/proxy/build.bat` | MSVC x86 no-CRT build (auto-finds VS via vswhere) |
-| `extensions/skinning/README.md` | Guide for enabling skinning (late-stage only) |
-
-Per-game copies live at `patches/<GameName>/` (copy the whole template directory).
-
-### Analysis Scripts
-
-| Script | What it surfaces |
-|--------|-----------------|
-| `scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
-| `scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
-| `scripts/find_device_calls.py <game.exe>` | Device vtable call patterns |
-| `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats |
-| `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | D3D9 vtable calls in a code region |
-
-Scripts are fast first-pass scanners — always follow up with `retools` and `livetools` for deep analysis.
-
-### Game-Specific Defines
-
-The top of `proxy/d3d9_device.c` has a `GAME-SPECIFIC` section that must be set from RE findings:
-
-```c
-#define VS_REG_VIEW_START       0   // First register of view matrix
-#define VS_REG_VIEW_END         4
-#define VS_REG_PROJ_START       4   // First register of projection matrix
-#define VS_REG_PROJ_END         8
-#define VS_REG_WORLD_START     16   // First register of world matrix
-#define VS_REG_WORLD_END       20
-#define ENABLE_SKINNING         0   // Off by default; only set to 1 after rigid FFP works
-```
-
-### Porting Workflow
-
-1. **Static analysis**: Run `find_d3d_calls.py`, `find_vs_constants.py`, `decode_vtx_decls.py`. Use `retools.decompiler` on `SetVertexShaderConstantF` call sites to identify matrix register layout.
-2. **Dynamic confirmation**: Trace `SetVertexShaderConstantF` live:
-   ```bash
-   python -m livetools trace <call_addr> --count 50 \
-       --read "[esp+8]:4:uint32; [esp+10]:4:uint32; *[esp+c]:64:float32"
-   ```
-   Captures: startRegister, Vector4fCount, and the actual float data (first 4 vec4 constants, dereferenced).
-3. **Copy template**: `patches/<GameName>/` — update the `GAME-SPECIFIC` defines.
-4. **Build**: `cd patches/<GameName>/proxy && build.bat`
-5. **Deploy**: Copy `d3d9.dll` + `proxy.ini` to the game directory.
-6. **Iterate via log**: The proxy writes `ffp_proxy.log` after a 50-second delay. Check VS regs written, vertex declarations, actual matrix values. Do not change the logging delay unless the user asks.
-
-**Always tell the user when you need them to interact with the game** for logging or hooking purposes. They must be in-game with real geometry visible.
-
-### Editing d3d9_device.c — What to Edit vs Leave Alone
-
-| Section | Edit Per-Game? |
-|---------|----------------|
-| `VS_REG_*` and `ENABLE_SKINNING` defines | **YES** |
-| `FFP_SetupLighting`, `FFP_SetupTextureStages`, `FFP_ApplyTransforms` | MAYBE |
-| `WD_DrawPrimitive` / `WD_DrawIndexedPrimitive` | **YES** — draw routing |
-| IUnknown + relay thunks | NO — naked ASM, never edit |
-| Everything else | NO |
-
-**DrawIndexedPrimitive routing**: no NORMAL → HUD passthrough; rigid with NORMAL → FFP convert; skinned → FFP skinned draw (only when `ENABLE_SKINNING=1`).
-
-### Common Pitfalls
-
-- **Wrong matrices**: D3D9 FFP expects row-major. Proxy transposes. If game stores row-major in VS constants, remove the transpose in `FFP_ApplyTransforms`.
-- **White/black objects**: Albedo texture on stage 1+. Set `AlbedoStage` in `proxy.ini`, or trace `SetTexture` to find the right stage.
-- **Geometry at origin**: World matrix register mapping wrong — re-check VS constant writes via `livetools trace`.
-- **Game crashes on startup**: Set `Enabled=0` in `proxy.ini [Remix]` to test without Remix.
-- **Missing world geometry**: Check whether its vertex decl has NORMAL and whether `viewProjValid` is true at draw time.
 

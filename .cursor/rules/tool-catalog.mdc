@@ -266,6 +266,14 @@ These tools find references via three mechanisms:
 
 If you suspect a reference exists but the tool doesn't find it, the address might be computed at runtime (e.g., base + offset in a register), loaded from a table, or assembled across multiple instructions. In those cases, try `search.py pattern` with the address bytes directly, or use `livetools memwatch` to catch runtime access.
 
+### `livetools` -- static vs runtime addresses
+
+**x86 games without ASLR** (most 32-bit games): the PE preferred base matches the runtime load address. Addresses from `retools` can be passed directly to `livetools`.
+
+**DLLs and ASLR-enabled executables**: runtime base may differ. Run `python -m livetools modules --filter <name>` and compare against the PE's preferred base. If they differ: `runtime_addr = runtime_base + (static_addr - preferred_base)`.
+
+**Hook the game's CALL, not the DLL entry.** To trace a D3D9/API method, hook the `call [reg+offset]` instruction *in the game's .exe* (found via `xrefs.py` or `vtable.py calls`), NOT the function entry point inside the DLL. The game's call site has arguments on the stack in known positions; the DLL entry point may be wrapped by proxies and is shared across all callers.
+
 ## Project Workspace
 
 Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts. This folder is fair game -- create whatever you need:
@@ -276,6 +284,26 @@ Use `patches/<project_name>/` (git-ignored) for all project-specific artifacts. 
 - Anything ephemeral or project-specific
 
 The `patches/` folder is in `.gitignore` so nothing leaks into the repo. Create the project subfolder on first use.
+
+### Backups
+
+Before modifying project files (proxy source, kb.h, proxy.ini, build scripts, ASI specs), create a timestamped backup in `patches/<project>/backups/`:
+
+```
+patches/<project>/backups/YYYY-MM-DD_HHMM_<description>/
+```
+
+Copy ALL files being modified into the backup folder. The description should be a short slug of what the update does (e.g. `added-world-matrix-regs`, `fixed-albedo-stage`, `enabled-skinning`).
+
+Example:
+```
+patches/MyGame/backups/2026-03-19_1430_added-world-matrix-regs/
+├── d3d9_device.c
+├── proxy.ini
+└── kb.h
+```
+
+Create the backup BEFORE making changes so it captures the last known-good state. This applies to all development work — FFP proxy edits, ASI patch specs, build config changes, and any other project file modifications.
 
 ## Knowledge Base
 
@@ -333,20 +361,20 @@ If you use this workflow, you __must__ read the associated .cursor\rules\dx9-ffp
 
 Per-game copies live at `patches/<GameName>/` (copy the whole template directory there).
 
-### Analysis Scripts — Entry Points, Not Endpoints
+### Analysis Scripts — Run These First
 
-The scripts below are fast first-pass scanners. They surface candidate addresses and call sites to give you a starting point. They do **not** replace deep analysis — always follow up with `retools` and `livetools` to understand what is actually happening.
+These scripts are purpose-built for FFP porting. Run ALL of them on the target binary before using retools manually — they surface D3D9-specific call sites, VS constant patterns, and vertex declarations that would take many individual retools commands to find.
 
 | Script | What it surfaces |
 |--------|------------------|
-| `scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
-| `scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
-| `scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
-| `scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
-| `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
-| `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
 
-Once you have addresses from these scripts, bring in the full RE toolset to understand what is actually happening. Some examples:
+Use the script output to guide deeper analysis with `retools` and `livetools`. Some examples:
 - `decompiler.py` on a `SetVertexShaderConstantF` call site can reveal the full calling context and which registers are loaded from where
 - `callgraph.py --up` can show what triggers a render path; `--down` can show what it drives
 - `xrefs.py` on an IAT slot can turn up call sites the scripts missed
@@ -358,7 +386,13 @@ Once you have addresses from these scripts, bring in the full RE toolset to unde
 
 The goal is to answer three questions. The tools and approaches below are illustrative — use whatever combination gives the clearest answer for the specific game.
 
-**Recommended first step**: Deploy the D3D9 tracer proxy (`graphics/directx/dx9/tracer/bin/`) to the application directory, capture 2 frames, then run `--shader-map` and `--const-provenance`. The shader disassembly includes CTAB headers with **named parameters** (e.g. `WorldViewProj c0 4`, `WorldView c4 3`, `FogValue c8 1`) which directly answer question #1 without any manual RE. Follow up with `--vtx-formats` for question #2 and `--render-passes` + `--pipeline-diagram` for question #3.
+**After static analysis, deploy the DX9 tracer before live tracing.** Run the analysis scripts first (fast offline scans), then deploy `graphics/directx/dx9/tracer/bin/d3d9.dll` + `proxy.ini` to the game directory, capture 2 frames (`python -m graphics.directx.dx9.tracer trigger --game-dir <DIR>`), and run:
+- `--shader-map` — CTAB names map registers to purpose (e.g. `WorldViewProj c0 4`), often answering question #1 outright
+- `--const-provenance` — which code set each constant per draw
+- `--vtx-formats` — answers question #2 (vertex formats + skinning detection)
+- `--render-passes` + `--pipeline-diagram` — answers question #3
+
+If the tracer gives you the register layout, use livetools only to fill gaps. If the game crashes with the tracer proxy, fall back to the livetools-based approach.
 
 **1. Which VS constant registers hold View, Projection, and World matrices?**
 - **Best**: `dx9tracer analyze --shader-map` — CTAB names map registers to their purpose directly (e.g. `WorldViewProj c0 4`, `BlendMatrices c0 64`)
