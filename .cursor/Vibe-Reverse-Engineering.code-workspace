@@ -4,9 +4,6 @@
 			"path": ".."
 		},
 		{
-			"path": "A:/SteamLibrary/steamapps/common/Tomb Raider Legend"
-		},
-		{
 			"path": "../../../../../Downloads/remix"
 		},
 		{
@@ -23,6 +20,9 @@
 		},
 		{
 			"path": "../../../../../Downloads/ghidra_12.0_PUBLIC_20260314_GhidrAssistMCP"
+		},
+		{
+			"path": "A:/SteamLibrary/steamapps/common/Tomb Raider LegendFIRSTVIBECODE"
 		}
 	],
 	"settings": {}
