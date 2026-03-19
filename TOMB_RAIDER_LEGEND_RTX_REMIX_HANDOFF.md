@@ -851,7 +851,7 @@ This is the simplest possible approach and it WORKS for geometry placement.
 
 ## 5. Experimental Backup Catalog
 
-All test artifacts live in the game directory under `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\Reverse\`. Organization rules are in `Reverse/RULES.md`.
+All test artifacts live in the game directory under `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\Reverse\`. Organization rules are in `Reverse/RULES.md`.
 
 | Subfolder | Contents |
 |-----------|----------|
@@ -1113,12 +1113,28 @@ AlbedoStage=0, DisableNormalMaps=0, ForceFfpSkinned=0, ForceFfpNoTexcoord=0, Fru
 - Per-object World is camera-independent → stable hashes
 - Proper View/Proj give Remix correct camera for ray casting
 
+### Fix: Floating Polygon Artifacts (2026-03-19)
+
+**Symptom**: Large shattered reflective polygon fragments floating throughout the 3D scene. White/mirror-like geometric shards at random angles, overlapping correct world geometry.
+
+**Root Cause**: ~666 screen-space draws per frame (42% of all draws) were leaking through the draw routing filter into `FFP_Engage()`. These draws use **FLOAT3 POSITION** vertex declarations (post-processing, bloom, tonemapping, UI overlays). World geometry exclusively uses **SHORT4 POSITION**.
+
+The previous fullscreen quad filter (`pc <= 2 && nv <= 6 && !curDeclHasNormal`) caught **zero** of these because TRL passes the entire shared vertex buffer capacity (~21845) as `NumVertices`, not the actual vertex count. The pre-transformed check (WVP ≈ Proj) also failed for some draws due to floating-point precision mismatch.
+
+When these FLOAT3 draws entered `FFP_ApplyTransforms()`, the decomposition `World = WVP × inv(VP)` produced nonsensical transforms (their WVP is just a projection matrix, so `World = Proj × inv(VP)` = garbage), placing flat screen-aligned quads as random floating polygons in 3D space.
+
+**Fix**: Replaced both the dead fullscreen quad check and the fragile pre-transformed heuristic with a single structural check: `curDeclPosIsFloat3`. This field was already parsed in `SetVertexDeclaration` and cleanly separates the two vertex format families. All FLOAT3-position draws are now skipped (`return 0`) before reaching `FFP_Engage()`.
+
+**What was removed**:
+- `pc <= 2 && nv <= 6 && !curDeclHasNormal` — caught zero draws in TRL
+- WVP ≈ Proj matrix comparison (16-float per-draw comparison) — fragile, precision-dependent
+- Orphaned `dip_done` label from the removed `goto`
+
 ### Remaining Issues
 
 - **Wireframe grid lines on ground** — white lines at terrain patch/polygon boundaries. Attempted fixes: (1) `mat4_quantize` 1/256 grid on World matrix — caused visible grid artifacts, removed. (2) Suppressing line primitive draws (pt==2, pt==3) — had no effect, lines are NOT from line primitives. (3) Forcing D3DRS_FILLMODE=D3DFILL_SOLID before every draw call on the real device — still persists. The wireframe appears to be a Remix-side rendering artifact at mesh seams/boundaries under path tracing. May need `rtx.smoothNormalsTextures` with ground texture hashes, adjusting Remix denoiser settings, or using Remix geometry merging.
 - **Hash instability** — `mat4_quantize` was removed. Replaced with cross-frame VP inverse caching (epsilon 1e-4 comparison: reuse previous frame's VP inverse when camera hasn't moved). This should stabilize hashes for static camera + static objects. If instability persists, the source may be vertex buffer contents or Remix hashing on additional state.
 - **Lara outline in freecam** — when using Remix freecam, a ghost outline of Lara follows the camera center. Likely a game-side silhouette/outline shader effect. The game renders Lara relative to its internal camera, but Remix re-projects from the freecam position. Need to identify the outline draw's texture hash and add to `rtx.ignoreTextures`.
-- **Alpha geometry (plants, hair tips)** — some small alpha-tested geometry wasn't interactable. The quad skip filter (`pc<=2 && nv<=6`) was catching small alpha geometry like leaves/hair. Removed the quad skip entirely to allow all textured draws through.
 - **Stage light USD mod** — placed at `rtx-remix/mods/stagelight/mod.usda`. Red SphereLight (intensity=400) attached to mesh `46C470FAE2CCDB3E`. If the light doesn't appear, the mesh prim path may need adjustment via Remix DevTools.
 - Some dark areas may need additional light sources via Remix toolkit
 

@@ -56,6 +56,9 @@ extern void log_floats(const char *prefix, float *data, unsigned int count);
 extern void log_float_val(const char *prefix, float f);
 extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 
+/* Forward declarations for game patches */
+static int TRL_PatchFloat(unsigned int addr, float value, const char *name);
+
 /* ============================================================
  * GAME-SPECIFIC: VS Constant Register Layout — Tomb Raider Legend
  *
@@ -98,6 +101,15 @@ extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 #define TRL_CULL_PATCH_VA    0x0040EEA7
 #define TRL_CULL_PATCH_LEN   15
 
+/* Additional culling globals (discovered via static analysis) */
+#define TRL_VIEW_DIST_ADDR   0x010FC910  /* float: max view distance for spatial tree */
+#define TRL_FRUST_AABB_MIN   0x00EFD404  /* float: left/bottom frustum AABB bound (-1.0) */
+#define TRL_FRUST_AABB_MAX   0x00EFD40C  /* float: right/top frustum AABB bound (1.0) */
+#define TRL_FAR_CLIP_ADDR    0x00EFFECC  /* float: far clipping plane (12288.0) */
+#define TRL_PARTICLE_NEAR    0x00EFE5EC  /* float: particle Z-depth near cull (20.0) */
+#define TRL_PARTICLE_FADE    0x00EFFF0C  /* float: particle alpha fade distance (14336.0) */
+#define TRL_PARTICLE_FADE2   0x00EFFF08  /* float: intermediate fade threshold (6144.0) */
+
 /* Bone palette detection */
 #define VS_REG_BONE_THRESHOLD  48
 #define VS_REGS_PER_BONE        3   /* 4x3 packed per bone */
@@ -123,7 +135,7 @@ extern void log_floats_dec(const char *prefix, float *data, unsigned int count);
 
 /* ---- Diagnostic logging ---- */
 #define DIAG_LOG_FRAMES 10
-#define DIAG_DELAY_MS 30000
+#define DIAG_DELAY_MS 15000
 #define DIAG_ENABLED 1
 
 #define DIAG_ACTIVE(self) \
@@ -334,13 +346,11 @@ typedef struct WrappedDevice {
     int wvpDirty;           /* c0-c3 WorldViewProject changed */
     int psConstDirty;
 
-    /* Cached VP inverse, computed once per scene in FFP_ApplyTransforms */
-    float cachedVpInv[16];
-    int vpInvValid;
-
-    /* Cross-frame VP caching: reuse the previous inverse when VP hasn't
-     * changed, eliminating floating-point jitter in the World matrix that
-     * breaks Remix hash stability for static objects. */
+    /* VP inverse cache: reuse the previous inverse when VP hasn't changed
+     * (within epsilon), eliminating floating-point jitter in the World
+     * matrix that breaks Remix hash stability for static objects.
+     * Recomputed from game memory every draw to handle multi-pass rendering
+     * (shadow maps, reflections) where VP changes mid-scene. */
     float prevVP[16];
     float prevVpInv[16];
     int prevVpInvValid;
@@ -369,6 +379,7 @@ typedef struct WrappedDevice {
     int curDeclHasTexcoord;
     int curDeclHasNormal;
     int curDeclHasColor;
+    int curDeclPosIsFloat3;  /* POSITION element is FLOAT3 (screen-space vertex format) */
     int curDeclNumElems;
     unsigned char curDeclElems[8 * 20];
 
@@ -399,7 +410,7 @@ typedef struct WrappedDevice {
     unsigned int ffpDraws;
     unsigned int skinnedDraws;
     unsigned int quadSkips;
-    unsigned int screenSpaceSkips;
+    unsigned int float3Passes;
     unsigned int shaderDraws;
     unsigned int decomposedCount;
     unsigned int fallbackCount;
@@ -424,6 +435,9 @@ static __inline void shader_release(void *pShader) {
         ((FN)(*(void***)pShader)[2])(pShader);
     }
 }
+
+/* Forward declarations */
+static void TRL_EnforceViewDistance(void);
 
 /* ---- FFP State Setup ---- */
 
@@ -587,16 +601,24 @@ static int mat4_inverse(float *dst, const float *m) {
 }
 
 /*
- * Detect screen-space draws: WVP is a pure projection matrix (no world/view
- * rotation or translation). In raw VS constants (column-major), a pure
- * projection has zero cross-terms in columns 0 and 1:
- *   col0 = [sx, 0, 0, 0]   col1 = [0, sy, 0, 0]
- * World geometry always has non-zero cross-terms from the View rotation.
+ * Quantize a 4x4 matrix to eliminate floating-point jitter.
+ *
+ * The WVP decomposition (World = WVP * inv(VP)) produces slightly different
+ * World matrices for the same static object when VP changes (camera moves).
+ * Remix hashes geometry by vertex data + World transform, so sub-ULP jitter
+ * causes hash instability. Snapping each element to a grid eliminates this.
+ *
+ * Grid size 1e-3 is larger than typical FP decomposition error (~1e-5)
+ * but small enough to preserve spatial accuracy (0.001 world units ≈ <1mm).
  */
-static int is_screen_space_wvp(float *vsConst) {
-    float *wvp = &vsConst[VS_REG_WVP_START * 4];
-    return (wvp[1] == 0.0f && wvp[2] == 0.0f &&
-            wvp[4] == 0.0f && wvp[6] == 0.0f);
+static void mat4_quantize(float *m, float grid) {
+    float inv_grid = 1.0f / grid;
+    int i;
+    for (i = 0; i < 16; i++) {
+        float v = m[i] * inv_grid;
+        /* Round to nearest integer, then scale back */
+        m[i] = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) * grid;
+    }
 }
 
 /*
@@ -605,22 +627,23 @@ static int is_screen_space_wvp(float *vsConst) {
  * TRL uploads a combined WVP to c0-c3 for ALL shaders. There is no
  * separate World/View/Projection in constants. c8-c15 are NOT matrices.
  *
- * Strategy: Full decomposition — read View and Projection from game memory,
- * compute World = WVP * inv(View * Proj). The VP inverse is cached per-scene
- * and reused across frames when the VP matrix hasn't changed (within 1e-4
- * epsilon), eliminating floating-point jitter in the decomposed World matrix
- * that would otherwise break Remix hash stability. With rtx.fusedWorldViewMode=0,
- * Remix treats W/V/P independently and can enable path tracing.
+ * Strategy: Full decomposition — read View and Projection from game memory
+ * every draw, compute World = WVP * inv(View * Proj). The VP inverse is
+ * cached and reused when VP hasn't changed (within 1e-4 epsilon), which
+ * eliminates floating-point jitter in the decomposed World matrix that
+ * breaks Remix hash stability for static objects. VP is recomputed from
+ * game memory every draw to handle multi-pass rendering (shadow maps,
+ * reflections) where the game changes View/Proj mid-scene.
  *
- * fusedWorldViewMode=1 was tried but Remix wouldn't engage path tracing.
- * fusedWorldViewMode=0 with proper W/V/P separation does engage path tracing.
+ * fusedWorldViewMode=0 with proper W/V/P separation enables path tracing.
  */
 static void FFP_ApplyTransforms(WrappedDevice *self) {
     typedef int (__stdcall *FN_SetTransform)(void*, unsigned int, float*);
     void **vt = RealVtbl(self);
-    float wvpRM[16], world[16];
+    float wvpRM[16], world[16], vp[16], vpInv[16];
     float *gameView = (float *)TRL_VIEW_ADDR;
     float *gameProj = (float *)TRL_PROJ_ADDR;
+    int haveVpInv = 0;
     int decomposed = 0;
 
     if (!self->wvpDirty) return;
@@ -629,45 +652,41 @@ static void FFP_ApplyTransforms(WrappedDevice *self) {
     /* c0-c3 in VS constants are columns of WVP; transpose to row-major for D3D */
     mat4_transpose(wvpRM, &self->vsConst[VS_REG_WVP_START * 4]);
 
-    /* Compute and cache VP inverse once per scene.
-     * Reuse the previous frame's inverse when VP hasn't changed — this
-     * eliminates sub-ULP jitter in the decomposed World matrix that causes
-     * Remix hash instability for static objects. */
-    if (!self->vpInvValid) {
-        float vp[16];
-        mat4_mul(vp, gameView, gameProj);
+    /* Compute VP from current game memory every draw.
+     * Reuse cached inverse when VP matches previous (within epsilon) —
+     * eliminates FP jitter for hash stability without stale-caching
+     * across render passes. */
+    mat4_mul(vp, gameView, gameProj);
 
-        if (self->prevVpInvValid) {
-            int same = 1;
-            int ci;
-            for (ci = 0; ci < 16; ci++) {
-                float diff = vp[ci] - self->prevVP[ci];
-                if (diff > 1e-4f || diff < -1e-4f) { same = 0; break; }
-            }
-            if (same) {
-                int cj;
-                for (cj = 0; cj < 16; cj++)
-                    self->cachedVpInv[cj] = self->prevVpInv[cj];
-                self->vpInvValid = 1;
-            }
+    if (self->prevVpInvValid) {
+        int same = 1;
+        int ci;
+        for (ci = 0; ci < 16; ci++) {
+            float diff = vp[ci] - self->prevVP[ci];
+            if (diff > 1e-4f || diff < -1e-4f) { same = 0; break; }
         }
-
-        if (!self->vpInvValid) {
-            self->vpInvValid = mat4_inverse(self->cachedVpInv, vp);
-            if (self->vpInvValid) {
-                int ck;
-                for (ck = 0; ck < 16; ck++) {
-                    self->prevVP[ck] = vp[ck];
-                    self->prevVpInv[ck] = self->cachedVpInv[ck];
-                }
-                self->prevVpInvValid = 1;
-            }
+        if (same) {
+            int cj;
+            for (cj = 0; cj < 16; cj++) vpInv[cj] = self->prevVpInv[cj];
+            haveVpInv = 1;
         }
     }
 
-    if (self->vpInvValid) {
-        /* World = WVP * cached_inv(VP) */
-        mat4_mul(world, wvpRM, self->cachedVpInv);
+    if (!haveVpInv) {
+        haveVpInv = mat4_inverse(vpInv, vp);
+        if (haveVpInv) {
+            int ck;
+            for (ck = 0; ck < 16; ck++) {
+                self->prevVP[ck] = vp[ck];
+                self->prevVpInv[ck] = vpInv[ck];
+            }
+            self->prevVpInvValid = 1;
+        }
+    }
+
+    if (haveVpInv) {
+        mat4_mul(world, wvpRM, vpInv);
+        mat4_quantize(world, 1e-3f);
 
         ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal, D3DTS_WORLD, world);
         ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal, D3DTS_VIEW, gameView);
@@ -675,7 +694,6 @@ static void FFP_ApplyTransforms(WrappedDevice *self) {
         decomposed = 1;
         self->decomposedCount++;
     } else {
-        /* VP not invertible (e.g. during menus). Fallback: WVP as World. */
         ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal, D3DTS_WORLD, wvpRM);
         ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal, D3DTS_VIEW, (float*)s_identity);
         ((FN_SetTransform)vt[SLOT_SetTransform])(self->pReal, D3DTS_PROJECTION, (float*)s_identity);
@@ -996,7 +1014,7 @@ static int __stdcall WD_Present(WrappedDevice *self, void *a, void *b, void *c, 
         log_int("    FFP draws:     ", self->ffpDraws);
         log_int("    Skinned draws: ", self->skinnedDraws);
         log_int("    Quad skips:    ", self->quadSkips);
-        log_int("    Screen skips:  ", self->screenSpaceSkips);
+        log_int("    Float3 passes: ", self->float3Passes);
         log_int("    Shader draws:  ", self->shaderDraws);
         log_int("    Decomposed:    ", self->decomposedCount);
         log_int("    Fallback:      ", self->fallbackCount);
@@ -1018,7 +1036,7 @@ static int __stdcall WD_Present(WrappedDevice *self, void *a, void *b, void *c, 
     self->ffpDraws = 0;
     self->skinnedDraws = 0;
     self->quadSkips = 0;
-    self->screenSpaceSkips = 0;
+    self->float3Passes = 0;
     self->shaderDraws = 0;
     self->decomposedCount = 0;
     self->fallbackCount = 0;
@@ -1037,8 +1055,6 @@ static int __stdcall WD_BeginScene(WrappedDevice *self) {
     typedef int (__stdcall *FN)(void*);
     self->ffpSetup = 0;
     self->sceneCount++;
-    /* Invalidate VP cache so it's recomputed once this scene from fresh game memory */
-    self->vpInvValid = 0;
     return ((FN)RealVtbl(self)[SLOT_BeginScene])(self->pReal);
 }
 
@@ -1166,36 +1182,53 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
     /* Force solid fill before every draw */
     ((FN_RS)RealVtbl(self)[SLOT_SetRenderState])(self->pReal, D3DRS_FILLMODE, D3DFILL_SOLID);
 
-    if (self->wvpValid &&
-        self->curDeclHasTexcoord &&
-        pt == 4 &&
-        self->streamStride[0] >= 12) {
+    if (self->wvpValid && pt == 4 && self->streamStride[0] >= 12) {
 
-        if (is_screen_space_wvp(self->vsConst)) {
-            /* Screen-space effect (fog/shadow/outline overlay): WVP is a pure
-             * projection with identity world/view. Suppress — path tracing
-             * replaces these rasterization-era effects, and FFP-converting
-             * them places screen geometry at the camera position. */
-            self->screenSpaceSkips++;
-            return 0;
-        } else if (self->curDeclIsSkinned) {
-            /* Skinned mesh: apply transforms for Remix, draw with shaders */
+        /* FLOAT3 position draws: characters (Lara) and screen-space effects.
+         * TRL uses GPU skinning via VS constants, not BLENDWEIGHT in vertex decl,
+         * so curDeclIsSkinned is always 0. Distinguish by comparing WVP to Proj:
+         *   WVP ≈ Proj → screen-space (post-process, UI) → skip
+         *   WVP ≠ Proj → real geometry (Lara, characters) → decompose + draw */
+        if (self->curDeclPosIsFloat3) {
+            float wvpCheck[16];
+            float *gP = (float *)TRL_PROJ_ADDR;
+            int isScreenSpace = 1;
+            int pi;
+            mat4_transpose(wvpCheck, &self->vsConst[VS_REG_WVP_START * 4]);
+            for (pi = 0; pi < 16; pi++) {
+                float diff = wvpCheck[pi] - gP[pi];
+                if (diff > 0.05f || diff < -0.05f) { isScreenSpace = 0; break; }
+            }
+            if (isScreenSpace) {
+                self->quadSkips++;
+                return 0;
+            }
+            /* FLOAT3 character geometry: decompose W/V/P and draw with shaders */
             FFP_Engage(self);
             hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
             self->skinnedDraws++;
+        } else if (self->curDeclIsSkinned) {
+            /* Skinned mesh with BLENDWEIGHT (not used by TRL, but kept for safety) */
+            {
+                typedef int (__stdcall *FN_ST)(void*, unsigned int, float*);
+                void **vt = RealVtbl(self);
+                float *gV = (float *)TRL_VIEW_ADDR;
+                float *gP = (float *)TRL_PROJ_ADDR;
+                ((FN_ST)vt[SLOT_SetTransform])(self->pReal, D3DTS_WORLD, (float*)s_identity);
+                ((FN_ST)vt[SLOT_SetTransform])(self->pReal, D3DTS_VIEW, gV);
+                ((FN_ST)vt[SLOT_SetTransform])(self->pReal, D3DTS_PROJECTION, gP);
+                self->ffpActive = 1;
+            }
+            hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
+            self->skinnedDraws++;
         } else {
-            /*
-             * Rigid mesh: apply decomposed transforms for Remix,
-             * draw with ORIGINAL shaders (not FFP). The shader handles
-             * SHORT4 position transforms; Remix vertex capture intercepts
-             * post-VS output and uses our SetTransform W/V/P for world-space.
-             */
+            /* Rigid mesh: decompose W/V/P from WVP constants + game memory */
             self->ffpDraws++;
             FFP_Engage(self);
             hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
         }
     } else {
-        /* Transforms not captured yet, pass through with shaders */
+        /* Non-triangle, no WVP, or tiny stride — passthrough */
         hr = ((FN)RealVtbl(self)[SLOT_DrawIndexedPrimitive])(self->pReal, pt, bvi, mi, nv, si, pc);
         self->shaderDraws++;
     }
@@ -1220,11 +1253,10 @@ static int __stdcall WD_DrawIndexedPrimitive(WrappedDevice *self,
     if (DIAG_ACTIVE(self) && self->diagDipLogged < 200) {
         /* Determine route taken for this draw */
         const char *route = "SHADER";
-        if (self->wvpValid && self->curDeclHasTexcoord && pt == 4 && self->streamStride[0] >= 12) {
-            if (is_screen_space_wvp(self->vsConst)) route = "SCREEN_SKIP";
-            else if (self->curDeclIsSkinned)         route = "SKINNED";
-            else if (pc <= 2 && nv <= 6)             route = "QUAD_SKIP";
-            else                                     route = "FFP";
+        if (self->wvpValid && pt == 4 && self->streamStride[0] >= 12) {
+            if (pc <= 2 && nv <= 6 && !self->curDeclHasNormal) route = "QUAD_SKIP";
+            else if (self->curDeclIsSkinned)                    route = "SKINNED";
+            else                                                route = "FFP";
         }
 
         log_int("  DIP #", self->drawCallCount);
@@ -1317,14 +1349,33 @@ static int __stdcall WD_SetVertexShaderConstantF(WrappedDevice *self,
         /* Dirty tracking per register range */
         if (startReg < VS_REG_WVP_END && endReg > VS_REG_WVP_START) {
             self->wvpDirty = 1;
-            self->wvpValid = 1;
+            /* Only mark valid if non-zero */
+            {
+                float *wvp = &self->vsConst[VS_REG_WVP_START * 4];
+                int nonzero = 0;
+                unsigned int wi;
+                for (wi = 0; wi < 16; wi++) {
+                    if (wvp[wi] != 0.0f) { nonzero = 1; break; }
+                }
+                if (nonzero) self->wvpValid = 1;
+            }
         }
         if (startReg < VS_REG_WORLD_END && endReg > VS_REG_WORLD_START) {
             self->worldDirty = 1;
         }
         if (startReg < VS_REG_VIEWPROJ_END && endReg > VS_REG_VIEWPROJ_START) {
             self->viewProjDirty = 1;
-            self->viewProjValid = 1;
+            /* Only mark valid if the ViewProj data is non-zero — the game
+             * uploads c8 count=8 with zeros in the c12-c15 range during menus. */
+            {
+                float *vp = &self->vsConst[VS_REG_VIEWPROJ_START * 4];
+                int nonzero = 0;
+                unsigned int vi;
+                for (vi = 0; vi < 16; vi++) {
+                    if (vp[vi] != 0.0f) { nonzero = 1; break; }
+                }
+                if (nonzero) self->viewProjValid = 1;
+            }
         }
 
         for (i = 0; i < count; i++) {
@@ -1366,15 +1417,13 @@ static int __stdcall WD_SetVertexShaderConstantF(WrappedDevice *self,
     return ((FN)RealVtbl(self)[SLOT_SetVertexShaderConstantF])(self->pReal, startReg, pData, count);
 }
 
-/* 107: SetPixelShader */
+/* 107: SetPixelShader — always forward; shaders stay active in this proxy */
 static int __stdcall WD_SetPixelShader(WrappedDevice *self, void *pShader) {
     typedef int (__stdcall *FN)(void*, void*);
     shader_addref(pShader);
     shader_release(self->lastPS);
     self->lastPS = pShader;
-    if (!self->ffpActive)
-        return ((FN)RealVtbl(self)[SLOT_SetPixelShader])(self->pReal, pShader);
-    return 0; /* swallowed while in FFP mode */
+    return ((FN)RealVtbl(self)[SLOT_SetPixelShader])(self->pReal, pShader);
 }
 
 /* 109: SetPixelShaderConstantF */
@@ -1433,6 +1482,7 @@ static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
     self->curDeclHasTexcoord = 0;
     self->curDeclHasNormal = 0;
     self->curDeclHasColor = 0;
+    self->curDeclPosIsFloat3 = 0;
     self->curDeclNumElems = 0;
 
     if (pDecl) {
@@ -1457,6 +1507,9 @@ static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
                     unsigned char type = el[4];
                     if (stream == 0xFF || stream == 0xFFFF) break;
                     realElems++;
+                    if (usage == D3DDECLUSAGE_POSITION && usageIdx == 0) {
+                        self->curDeclPosIsFloat3 = (type == D3DDECLTYPE_FLOAT3);
+                    }
                     if (usage == D3DDECLUSAGE_BLENDWEIGHT) {
                         hasBlendWeight = 1;
                         blendWeightType = type;
@@ -1559,20 +1612,38 @@ static int __stdcall WD_SetVertexDeclaration(WrappedDevice *self, void *pDecl) {
  * In-memory patches for TRL: disable frustum culling and cull-mode check.
  * Called once at device creation.
  */
+/* Helper: patch a single float in the game's memory */
+static int TRL_PatchFloat(unsigned int addr, float value, const char *name) {
+    unsigned long oldProtect;
+    float *target = (float *)addr;
+    if (VirtualProtect(target, sizeof(float), 0x04 /*PAGE_READWRITE*/, &oldProtect)) {
+        *target = value;
+        VirtualProtect(target, sizeof(float), oldProtect, &oldProtect);
+        log_str(name);
+        log_str(" patched\r\n");
+        return 1;
+    }
+    return 0;
+}
+
+/* Enforce view distance cap every frame (game's camera setup overwrites it).
+ * Use a large but finite value — 1e30 causes the spatial tree to traverse
+ * the entire level, freezing the game. 100000 is ~8x the default far clip
+ * (12288) which covers all visible geometry without rendering the universe. */
+static void TRL_EnforceViewDistance(void) {
+    float *viewDist = (float *)TRL_VIEW_DIST_ADDR;
+    *viewDist = 100000.0f;
+}
+
 static void TRL_ApplyGamePatches(void) {
     unsigned long oldProtect;
 
-    /* Set frustum threshold to a huge value so nothing is culled by distance */
-    {
-        float *threshold = (float *)TRL_FRUSTUM_THRESH;
-        if (VirtualProtect(threshold, sizeof(float), 0x04 /*PAGE_READWRITE*/, &oldProtect)) {
-            *threshold = 1e30f;
-            VirtualProtect(threshold, sizeof(float), oldProtect, &oldProtect);
-            log_str("Frustum threshold set to 1e30\r\n");
-        }
-    }
+    /* 1. Frustum distance threshold — must be large but finite.
+     * 1e30 causes the spatial tree to traverse the entire level, freezing.
+     * 100000 is ~8x default far clip (12288), covers all visible geometry. */
+    TRL_PatchFloat(TRL_FRUSTUM_THRESH, 100000.0f, "Frustum threshold");
 
-    /* Patch cull-mode conditional: always set ECX=1 (render everything) */
+    /* 2. Cull-mode conditional: always set ECX=1 (render everything) */
     {
         static const unsigned char expected[TRL_CULL_PATCH_LEN] = {
             0xF7,0xC3,0x00,0x00,0x20,0x00,0xB9,0x00,0x00,0x00,0x00,0x0F,0x95,0xC1,0x41
@@ -1597,6 +1668,13 @@ static void TRL_ApplyGamePatches(void) {
             VirtualProtect(site, TRL_CULL_PATCH_LEN, oldProtect, &oldProtect);
         }
     }
+
+    /* 3. Spatial tree view distance — large but finite to avoid freeze */
+    TRL_EnforceViewDistance();
+    log_str("View distance enforced (100000)\r\n");
+
+    /* 4. Far clipping plane — extend moderately (was 12288) */
+    TRL_PatchFloat(TRL_FAR_CLIP_ADDR, 100000.0f, "Far clip plane");
 }
 
 WrappedDevice* WrappedDevice_Create(void *pRealDevice) {
@@ -1776,7 +1854,10 @@ WrappedDevice* WrappedDevice_Create(void *pRealDevice) {
         w->disableNormalMaps = GetPrivateProfileIntA("FFP", "DisableNormalMaps", 1, iniBuf) ? 1 : 0;
     }
 
-    TRL_ApplyGamePatches();
+    /* Game patches disabled — frustum/cull/view-distance overrides cause the
+     * spatial tree to process too many nodes, freezing the game on level load.
+     * The shader-passthrough + transform-override approach works without them. */
+    /* TRL_ApplyGamePatches(); */
 
     log_str("WrappedDevice created with FFP conversion\r\n");
     log_int("  Diag delay (ms): ", DIAG_DELAY_MS);

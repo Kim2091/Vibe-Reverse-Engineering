@@ -20,7 +20,7 @@ The project assumes the following structure:
 flowchart TD
     REPO["Vibe-Reverse-Engineering repo"] --> BUILD["build.bat builds proxy"]
     REPO --> SYNC["sync_runtime_to_game.ps1 copies runtime artifacts"]
-    SYNC --> GAME["A:\\SteamLibrary\\steamapps\\common\\Tomb Raider Legend"]
+    SYNC --> GAME["A:\\SteamLibrary\\steamapps\\common\\Tomb Raider LegendFIRSTVIBECODE"]
     GAME --> RUN["trl.exe launch from game directory"]
     RUN --> DXW["dxwrapper.dll performs D3D8 -> D3D9"]
     DXW --> PROXY["custom d3d9.dll proxy"]
@@ -31,7 +31,7 @@ flowchart TD
 You need all of the following:
 
 1. A working Tomb Raider Legend install at:
-   `A:\SteamLibrary\steamapps\common\Tomb Raider Legend`
+   `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE`
 
 2. The project repository at:
    `C:\Users\skurtyy\Documents\GitHub\TombRaiderLegendRTX\Vibe-Reverse-Engineering`
@@ -85,9 +85,9 @@ These are the files you will use most often.
 | `patches/trl_legend_ffp/proxy/build.bat` | Proxy build script |
 | `patches/trl_legend_ffp/rtx.conf` | Working RTX Remix render config snapshot |
 | `patches/trl_legend_ffp/sync_runtime_to_game.ps1` | Deployment automation |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\dxwrapper.ini` | D3D8-to-D3D9 translation config |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\user.conf` | Working RTX Remix classification and feature config |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\ffp_proxy.log` | Runtime proof and debugging log |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\dxwrapper.ini` | D3D8-to-D3D9 translation config |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\user.conf` | Working RTX Remix classification and feature config |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\ffp_proxy.log` | Runtime proof and debugging log |
 
 ## Working Configuration Snapshot
 
@@ -197,7 +197,7 @@ This script:
    - `.lib`
    - `.exp`
 4. Copies the runtime files into:
-   `A:\SteamLibrary\steamapps\common\Tomb Raider Legend`
+   `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE`
 
 To sync and launch in one step:
 
@@ -210,7 +210,7 @@ Always launch `trl.exe` from the game directory, not from the repo root.
 
 Correct working directory:
 
-`A:\SteamLibrary\steamapps\common\Tomb Raider Legend`
+`A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE`
 
 This matters because the game resolves `bigfile.*` assets relative to the current working directory.
 

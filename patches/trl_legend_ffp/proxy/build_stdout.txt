@@ -1,4 +1,9 @@
-Microsoft Windows [Version 10.0.26200.8037]
-(c) Microsoft Corporation. All rights reserved.
-
-C:\Users\skurtyy\Documents\GitHub\TombRaiderLegendRTX\Vibe-Reverse-Engineering\patches\trl_legend_ffp\proxy>
+Compiling d3d9_main.c...
+d3d9_main.c
+Compiling d3d9_wrapper.c...
+d3d9_wrapper.c
+Compiling d3d9_device.c...
+d3d9_device.c
+Linking d3d9.dll...
+   Creating library d3d9.lib and object d3d9.exp
+=== Build successful: d3d9.dll ===

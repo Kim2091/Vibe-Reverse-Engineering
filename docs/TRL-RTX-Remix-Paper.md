@@ -230,7 +230,7 @@ The most important evidence and the question each artifact answered are listed b
 | `patches/trl_legend_ffp/upstream_camera_capture.jsonl` | Do the original `0x0060xxxx` callers own the active rigid path? | Not directly on the active rigid family |
 | `patches/trl_legend_ffp/wrapper_callers_capture.jsonl` | Which tiny wrappers dominate active rigid uploads? | `0x00413950`, `0x00413BF0`, `0x00413F40`, `0x00413F80` |
 | `patches/trl_legend_ffp/matrix_owner_capture.jsonl` | Who owns the active `start=0` path? | `0x00415B31` dominates; `0x0041536D` is the rarer frame-level path |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\ffp_proxy.log` | Did the new proxy actually enter FFP on rigid draws? | Yes. `canUseFfp=1` and `usedFfp=1` appear on `stride0=24` rigid draws |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\ffp_proxy.log` | Did the new proxy actually enter FFP on rigid draws? | Yes. `canUseFfp=1` and `usedFfp=1` appear on `stride0=24` rigid draws |
 
 ## Worked / Failed Matrix
 The table below is the shortest summary of the whole journey.
