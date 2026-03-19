@@ -328,15 +328,17 @@ Per-game copies live at `patches/<GameName>/` (copy the whole template directory
 
 ### Analysis Scripts
 
+These scripts are purpose-built for FFP porting — run ALL of them on the target binary before using retools. They surface D3D9-specific call sites, VS constant patterns, and vertex declarations that would take many retools commands to find manually.
+
 | Script | What it surfaces |
 |--------|-----------------|
-| `scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
-| `scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
-| `scripts/find_device_calls.py <game.exe>` | Device vtable call patterns |
-| `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats |
-| `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | D3D9 vtable calls in a code region |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_device_calls.py <game.exe>` | Device vtable call patterns |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | D3D9 vtable calls in a code region |
 
-Scripts are fast first-pass scanners — always follow up with `retools` and `livetools` for deep analysis.
+Use the script output to guide deeper analysis with `retools` (decompile specific call sites) and `livetools` (trace live values).
 
 ### Game-Specific Defines
 

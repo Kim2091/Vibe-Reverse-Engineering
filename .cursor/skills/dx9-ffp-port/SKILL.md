@@ -47,7 +47,7 @@ Per-game copies live at `patches/<GameName>/` (copy the whole template directory
 
 ### Step 1: Static Analysis
 
-Run the template's scripts to understand the game's D3D9 usage:
+Run ALL of the template's analysis scripts on the game binary. These are purpose-built for FFP porting — they surface D3D9-specific patterns (VS constant call sites, vertex declarations, device vtable usage) that would take many individual retools commands to find manually:
 
 ```bash
 python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py "<game.exe>"
@@ -56,7 +56,7 @@ python rtx_remix_tools/dx/dx9_ffp_template/scripts/decode_vtx_decls.py "<game.ex
 python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_device_calls.py "<game.exe>"
 ```
 
-Scripts are fast first-pass scanners — surface candidate addresses only. Always follow up with `retools` and `livetools` for deep analysis.
+Use the script output to guide deeper analysis with `retools` (decompile specific call sites) and `livetools` (trace live values).
 
 Key things to find:
 - How the game obtains its D3D device (Direct3DCreate9 → CreateDevice)
@@ -206,12 +206,12 @@ viewProjValid AND lastDecl AND !curDeclHasPosT AND !curDeclIsSkinned?
 
 | Script | What it surfaces |
 |--------|-----------------|
-| `scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
-| `scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
-| `scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
-| `scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
-| `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
-| `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
 
 ---
 

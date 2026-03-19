@@ -66,7 +66,7 @@ Follow these steps in order for ideal results. Each step depends on the previous
 
 ### Step 1: Static Analysis
 
-Run the template's analysis scripts to understand the game's D3D9 usage:
+Run ALL of the template's analysis scripts on the game binary. These are purpose-built for FFP porting — they surface D3D9-specific patterns (VS constant call sites, vertex declarations, device vtable usage) that would take many individual retools commands to find manually:
 
 ```bash
 python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py "<game.exe>"

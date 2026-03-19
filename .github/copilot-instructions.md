@@ -609,20 +609,20 @@ If you use this workflow, you __must__ read the associated .github\copilot-promp
 
 Per-game copies live at `patches/<GameName>/` (copy the whole template directory there).
 
-### Analysis Scripts — Entry Points, Not Endpoints
+### Analysis Scripts — Run These First
 
-The scripts below are fast first-pass scanners. They surface candidate addresses and call sites to give you a starting point. They do **not** replace deep analysis — always follow up with `retools` and `livetools` to understand what is actually happening.
+These scripts are purpose-built for FFP porting. Run ALL of them on the target binary before using retools manually — they surface D3D9-specific call sites, VS constant patterns, and vertex declarations that would take many individual retools commands to find.
 
 | Script | What it surfaces |
 |--------|------------------|
-| `scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
-| `scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
-| `scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
-| `scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
-| `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
-| `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_d3d_calls.py <game.exe>` | D3D9/D3DX imports and call sites |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vs_constants.py <game.exe>` | `SetVertexShaderConstantF` call sites and register/count args |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_device_calls.py <game.exe>` | Device vtable call patterns and device pointer refs |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/find_vtable_calls.py <game.exe>` | D3DX constant table usage and D3D9 vtable calls |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES → skinning) |
+| `python rtx_remix_tools/dx/dx9_ffp_template/scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
 
-Once you have addresses from these scripts, bring in the full RE toolset to understand what is actually happening. Some examples:
+Use the script output to guide deeper analysis with `retools` and `livetools`. Some examples:
 - `decompiler.py` on a `SetVertexShaderConstantF` call site can reveal the full calling context and which registers are loaded from where
 - `callgraph.py --up` can show what triggers a render path; `--down` can show what it drives
 - `xrefs.py` on an IAT slot can turn up call sites the scripts missed
