@@ -66,7 +66,7 @@ The fix was to:
 4. Keep `WORLD` and `VIEW` as identity on that path until the remaining upstream ownership is mapped cleanly.
 
 ## Decisive Runtime Evidence
-The working run produced the following proxy state in `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\ffp_proxy.log`:
+The working run produced the following proxy state in `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\ffp_proxy.log`:
 
 - `start0Seen=1`
 - `projectionReady=1`
@@ -89,9 +89,9 @@ These files are the most important evidence and implementation artifacts in the 
 | `patches/trl_legend_ffp/upstream_camera_capture.jsonl` | Wide caller trace | Captures the upstream helper family around the camera/projection pivot |
 | `patches/trl_legend_ffp/wrapper_callers_capture.jsonl` | Wrapper caller trace | Proves which tiny upload wrappers dominate the active rigid path |
 | `patches/trl_legend_ffp/matrix_owner_capture.jsonl` | Matrix owner trace | Proves who is feeding the active `start=0` matrix path |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\ffp_proxy.log` | Working runtime log | Shows `projectionReady=1` and `usedFfp=1` on rigid draws |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\user.conf` | Working Remix config | Contains the known-good RTX Remix feature and classification settings |
-| `A:\SteamLibrary\steamapps\common\Tomb Raider LegendFIRSTVIBECODE\dxwrapper.ini` | Translation layer config | Confirms `D3d8to9 = 1`, which explains the entire project shape |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\ffp_proxy.log` | Working runtime log | Shows `projectionReady=1` and `usedFfp=1` on rigid draws |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\user.conf` | Working Remix config | Contains the known-good RTX Remix feature and classification settings |
+| `A:\SteamLibrary\steamapps\common\Tomb Raider Legend\dxwrapper.ini` | Translation layer config | Confirms `D3d8to9 = 1`, which explains the entire project shape |
 | `TOMB_RAIDER_LEGEND_RTX_REMIX_HANDOFF.md` | Historical summary | Captures earlier branches, failures, and context before the latest success |
 
 ## Key Working Assumptions

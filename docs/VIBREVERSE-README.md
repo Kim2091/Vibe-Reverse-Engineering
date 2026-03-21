@@ -1,0 +1,68 @@
+# Vibe Reverse Engineering
+
+LLM-friendly static and dynamic analysis tools for **x86/x64 PE binaries**, designed for agentic coding tools. Point an agent at an `.exe`, describe what you want, and let it work.
+
+No reverse engineering experience required -- just good prompting. Although some basic knowledge of programming and RE can go a long way.
+
+## Requirements
+
+- A supported agentic coding tool:
+  - [Cursor IDE](https://cursor.sh)
+  - [VSCode](https://code.visualstudio.com/) + [Copilot](https://github.com/features/copilot)
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- Python 3.10+
+- Visual Studio 2022+ with C++ Desktop workload (only needed to build ASI patches)
+
+Radare2 (used by the decompiler) is bundled in `tools/` for Windows -- no separate install needed.
+
+### Python setup
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## How it works
+
+The project ships with agent instructions tailored to each supported environment:
+
+- **Cursor** — `.cursor/rules/`
+- **Copilot** — `.github/copilot-instructions.md`
+- **Claude Code** — `CLAUDE.md`
+
+Each teaches the agent the full tool catalog -- which tool to reach for, when, and why. The agent picks the right tool automatically based on your question.
+
+**Static analysis** (`retools/`) works directly on PE files on disk: disassembly, decompilation, cross-references, call graphs, vtable analysis, byte pattern search, and more.
+
+**Dynamic analysis** (`livetools/`) attaches to a running process via Frida: breakpoints, register/memory inspection, function tracing, instruction-level stepping, and live memory patching.
+
+## Usage
+
+Open this directory in your agentic coding tool and describe what you're after:
+
+> Disable frustum culling in "D:/Games/MyGame/AwesomeGame.exe" -- I'm modding raytracing and need geometry to render behind the camera for reflections/mirrors.
+
+Be descriptive about the feature or bug, the expected behavior, and your goal. The agent will plan and execute from there.
+
+## Local Checkpoints
+
+Use `checkpoint.py` to save and revisit local working states without turning them into normal project commits:
+
+```bash
+python checkpoint.py save "before matrix remap"
+python checkpoint.py list
+python checkpoint.py restore "before matrix remap"
+```
+
+Checkpoints snapshot the current repo state, including untracked files, into local git refs under `refs/checkpoints/`. Restore first autosaves the current state if needed, then opens the target checkpoint on its own branch so you can bounce around safely.
+
+Ignored files are excluded. If a generated file should stay out of checkpoints, add it to `.gitignore`.
+
+## Important
+
+Some processes (especially games) require their window to be focused for dynamic analysis to capture data -- breakpoints won't hit and traces won't register otherwise. Follow the agent's instructions and watch what it is doing.
+
+## License
+
+[MIT](LICENSE)
