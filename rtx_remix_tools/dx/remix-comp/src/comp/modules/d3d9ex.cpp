@@ -6,6 +6,7 @@
 #include "tracer.hpp"
 #include "shared/common/shader_cache.hpp"
 
+using comp::tracer;
 #include "tracer_dispatch.inc"
 #include "shared/common/ffp_state.hpp"
 #include "shared/common/config.hpp"
@@ -16,7 +17,7 @@ namespace comp
 
 	HRESULT d3d9ex::D3D9Device::QueryInterface(REFIID riid, void** ppvObj)
 	{
-		TRACE_IF_ACTIVE(trace_QueryInterface, riid, ppvObj);
+		TRACE_IF_ACTIVE(trace_QueryInterface, &riid, ppvObj);
 		*ppvObj = nullptr;
 		HRESULT hRes = m_pIDirect3DDevice9->QueryInterface(riid, ppvObj);
 
@@ -536,14 +537,14 @@ namespace comp
 
 	HRESULT d3d9ex::D3D9Device::DrawPrimitive([[maybe_unused]] D3DPRIMITIVETYPE PrimitiveType, [[maybe_unused]] UINT StartVertex, [[maybe_unused]] UINT PrimitiveCount)
 	{
-		TRACE_IF_ACTIVE_NOARGS(trace_DrawPrimitive);
+		TRACE_IF_ACTIVE(trace_DrawPrimitive, PrimitiveType, StartVertex, PrimitiveCount);
 		const auto hr = renderer::get()->on_draw_primitive(m_pIDirect3DDevice9, PrimitiveType, StartVertex, PrimitiveCount);
 		return hr;
 	}
 
 	HRESULT d3d9ex::D3D9Device::DrawIndexedPrimitive(D3DPRIMITIVETYPE PrimitiveType, INT BaseVertexIndex, UINT MinVertexIndex, UINT NumVertices, UINT startIndex, UINT primCount)
 	{
-		TRACE_IF_ACTIVE_NOARGS(trace_DrawIndexedPrimitive);
+		TRACE_IF_ACTIVE(trace_DrawIndexedPrimitive, PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
 		const auto hr = renderer::get()->on_draw_indexed_prim(m_pIDirect3DDevice9, PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
 		return hr;
 	}
@@ -1056,7 +1057,7 @@ namespace comp
 	{
 		// Detour remix' Direct3DCreate9 detour :p
 		// We end up with GameD3D -> OurD3D -> BridgeD3D -> Runtime
-		const auto addr = (DWORD)GetProcAddress(GetModuleHandle(L"d3d9.dll"), "Direct3DCreate9");
+		const auto addr = (DWORD)GetProcAddress(GetModuleHandleA("d3d9.dll"), "Direct3DCreate9");
 
 		// Idea: this project could also act as a d3d9.dll, which gets loaded by the game automatically -> no asiloader required.
 		// To load remix, the project would then need to load a renamed remix bridge dll (eg. "d3d9_remix.dll") 

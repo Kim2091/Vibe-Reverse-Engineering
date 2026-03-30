@@ -46,12 +46,9 @@ The codebase (`rtx_remix_tools/dx/remix-comp/`) is a dinput8.dll ASI proxy that:
 | `src/comp/game/game.cpp` | Per-game address init (patterns, hooks) |
 | `src/comp/game/game.hpp` | Per-game variables and function typedefs |
 | `remix-comp.ini` | Runtime config: register layout, albedo stage, skinning toggle, diagnostics |
-| `premake5.lua` | Base build system (shared lib + comp DLL) |
-| `premake5_shared.lua` | Shared static lib project definition |
-| `premake5_game.lua.template` | Per-game premake template for `patches/<GameName>/proxy/` |
-| `generate-buildfiles_vs22.bat` | Runs `premake5 vs2022` to generate VS solution |
+| `build.bat` | Build script: `build.bat [release\|debug] [--name Name] [--comp CompDir]` |
 
-Per-game copies: copy `src/comp/` to `patches/<GameName>/proxy/comp/` and use the premake template.
+Per-game: copy `src/comp/` to `patches/<GameName>/proxy/comp/`, then build with `build.bat release --name <GameName> --comp <path>`.
 
 ---
 
@@ -110,29 +107,24 @@ python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map
 ### Step 3: Set Up Per-Game Project
 
 1. Copy `rtx_remix_tools/dx/remix-comp/src/comp/` to `patches/<GameName>/proxy/comp/`
-2. Copy `rtx_remix_tools/dx/remix-comp/premake5_game.lua.template` to `patches/<GameName>/proxy/premake5.lua`
-3. Edit the premake file: set `REMIX_COMP_SRC` path and `GAME_NAME`
-4. Edit `remix-comp.ini` with discovered register layout (see INI Config section below)
-5. Edit `comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
-6. Customize `comp/modules/renderer.cpp` draw routing if needed (see Decision Trees below)
-7. Customize `comp/game/game.cpp` with game-specific address init if hooks are needed
-8. Update `kb.h` with discovered function signatures, structs, and globals
+2. Edit `remix-comp.ini` with discovered register layout (see INI Config section below)
+3. Edit `comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
+4. Customize `comp/modules/renderer.cpp` draw routing if needed (see Decision Trees below)
+5. Customize `comp/game/game.cpp` with game-specific address init if hooks are needed
+6. Update `kb.h` with discovered function signatures, structs, and globals
 
 ### Step 4: Build and Deploy
 
 ```bash
-cd patches/<GameName>/proxy
-generate-buildfiles_vs22.bat
-# Open build/<GameName>-comp.sln in VS2022, build Release
+cd rtx_remix_tools/dx/remix-comp
+build.bat release --name <GameName> --comp ..\..\..\..\patches\<GameName>\proxy\comp
 ```
 
-The build produces `<GameName>-comp.asi` in `build/bin/Release/`. Deploy:
+The build produces `<GameName>-comp.asi` in `build/bin/release/`. Deploy:
 - `<GameName>-comp.asi` to the game directory (or `plugins/` subfolder)
 - `remix-comp.ini` to the game directory
 - `dinput8.dll` (ASI loader) to the game directory
 - `d3d9_remix.dll` to the game directory if using Remix
-
-**Environment variable shortcut:** Set `REMIX_COMP_ROOT` to the game directory and `REMIX_COMP_ROOT_EXE` to the exe name. VS2022 will auto-deploy and can launch the game with F5.
 
 ### Step 5: Diagnose with Log and ImGui
 
