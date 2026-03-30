@@ -13,7 +13,7 @@ Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix comp
 
 ## What remix-comp Does
 
-The codebase (`rtx_remix_tools/dx/remix-comp/`) is a dinput8.dll ASI proxy (based on remix-comp-base) that:
+The codebase (`rtx_remix_tools/dx/remix-comp/`) is a dinput8.dll ASI proxy that:
 
 1. Captures VS constants (View, Projection, World matrices) from `SetVertexShaderConstantF` via `ffp_state::on_set_vs_const_f`
 2. Parses `SetVertexDeclaration` via `ffp_state::on_set_vertex_declaration` to detect BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets

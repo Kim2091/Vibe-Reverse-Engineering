@@ -75,5 +75,5 @@ Each file reads as if it was always designed this way. Comments guide the next d
 
 - **Tool catalog, decision guide, and caveats**: @.claude/rules/tool-catalog.md
 - **Subagent workflow and delegation rules**: @.claude/rules/subagent-workflow.md
-- **Project workspace and knowledge base format**: @.claude/rules/project-workspace.md
-- **DX9 FFP proxy porting for RTX Remix**: @.claude/rules/dx9-ffp-port.md
+- **remix-comp context budget (skip-list)**: @.claude/rules/remix-comp-context.md
+- **DX9 FFP proxy porting for RTX Remix**: @.claude/skills/dx9-ffp-port/SKILL.md
