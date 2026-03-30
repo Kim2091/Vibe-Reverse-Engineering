@@ -1,0 +1,10 @@
+@echo off
+:: Per-game build wrapper. Copy to patches/<GameName>/proxy/build.bat
+:: Edit GAME_NAME below, then run: build.bat [release|debug]
+
+set "GAME_NAME=MyGame"
+
+:: Locate remix-comp root (adjust if your patches/ folder depth differs)
+set "REMIX_COMP=%~dp0..\..\..\rtx_remix_tools\dx\remix-comp"
+
+call "%REMIX_COMP%\build.bat" %1 --name %GAME_NAME% --comp "%~dp0comp"
