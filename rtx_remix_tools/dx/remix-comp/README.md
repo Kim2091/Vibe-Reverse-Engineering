@@ -13,7 +13,7 @@ Legacy DX9 games use vertex/pixel shaders that RTX Remix can't inject ray-traced
 - **Draw routing** — configurable decision trees that classify each draw call (3D geometry, HUD, skinned mesh) and decide whether to convert or pass through
 - **INI configuration** — game-specific register layouts, albedo stage, skinning toggle, and diagnostics settings in `remix-comp.ini` (no recompile needed)
 - **ImGui debug overlay** (F4) — live VS constant heatmap, matrix viewer, texture stage bindings, draw stats, FFP enable/disable toggle
-- **Diagnostic logging** — timed frame dump to `ffp_proxy.log` for debugging VS register layouts, vertex declarations, and draw call routing
+- **Diagnostic logging** — timed frame dump to `rtx_comp\diagnostics.log` for debugging VS register layouts, vertex declarations, and draw call routing
 - **Optional skinning module** — runtime-toggled vertex skinning with bone matrix upload, vertex buffer expansion, and compressed format decoding
 - **Component module system** — `shared/` (game-agnostic static lib) + `comp/` (game-specific DLL) with clean separation
 - **Per-game build split** — shared library stays in the base, only `comp/` is copied per game project

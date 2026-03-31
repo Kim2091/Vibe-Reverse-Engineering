@@ -136,7 +136,7 @@ namespace shared::common
 
 			const std::string dir_path = shared::globals::root_path + "\\rtx_comp";
 			std::filesystem::create_directories(dir_path);
-			const std::string file_path = dir_path + "\\logfile.txt";
+			const std::string file_path = dir_path + "\\console.log";
 			log_file.open(file_path, std::ios::out | std::ios::trunc);
 		}
 	}

@@ -26,6 +26,8 @@ namespace shared::common
 
 		std::memcpy(&vs_const_[start_reg * 4], data, count * 4 * sizeof(float));
 
+		if (!cfg_) return; // init() not yet called (race with module init thread)
+
 		// Dirty tracking keyed to game-specific register layout
 		UINT end_reg = start_reg + count;
 		if (start_reg < static_cast<UINT>(cfg_->vs_reg_proj_end) &&
@@ -252,7 +254,7 @@ namespace shared::common
 
 	void ffp_state::engage(IDirect3DDevice9* dev)
 	{
-		if (!enabled_ || !dev) return;
+		if (!cfg_ || !enabled_ || !dev) return;
 
 		if (!ffp_active_)
 		{
@@ -282,7 +284,7 @@ namespace shared::common
 
 	void ffp_state::setup_albedo_texture(IDirect3DDevice9* dev)
 	{
-		if (!dev) return;
+		if (!cfg_ || !dev) return;
 
 		int as = cfg_->albedo_stage;
 		auto* albedo = (as >= 0 && as < 8) ? cur_texture_[as] : cur_texture_[0];

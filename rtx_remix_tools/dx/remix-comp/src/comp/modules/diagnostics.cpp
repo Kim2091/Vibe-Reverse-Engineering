@@ -27,7 +27,7 @@ namespace comp
 		// Open log file for auto-capture mode
 		if (auto_enabled_)
 		{
-			std::string path = shared::globals::root_path + "\\ffp_proxy.log";
+			std::string path = shared::globals::root_path + "\\rtx_comp\\diagnostics.log";
 			open_log(path);
 		}
 
@@ -87,11 +87,11 @@ namespace comp
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 		char buf[128];
-		snprintf(buf, sizeof(buf), "ffp_diag_%04d%02d%02d_%02d%02d%02d.log",
+		snprintf(buf, sizeof(buf), "diag_%04d%02d%02d_%02d%02d%02d.log",
 			st.wYear, st.wMonth, st.wDay,
 			st.wHour, st.wMinute, st.wSecond);
 
-		std::string path = shared::globals::root_path + "\\" + buf;
+		std::string path = shared::globals::root_path + "\\rtx_comp\\" + buf;
 		open_log(path);
 
 		if (log_file_ == INVALID_HANDLE_VALUE)
@@ -132,7 +132,7 @@ namespace comp
 		// Re-open the auto log file if auto mode is enabled and not done
 		if (auto_enabled_ && auto_logged_frames_ < auto_max_frames_)
 		{
-			std::string path = shared::globals::root_path + "\\ffp_proxy.log";
+			std::string path = shared::globals::root_path + "\\rtx_comp\\diagnostics.log";
 			log_file_ = CreateFileA(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
 				nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 			if (log_file_ != INVALID_HANDLE_VALUE)
