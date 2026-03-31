@@ -23,8 +23,7 @@ namespace shared::common
 		void on_set_ps_const_f(UINT start_reg, const float* data, UINT count);
 		void on_set_vertex_shader(IDirect3DVertexShader9* shader);
 
-		// Returns true if the call should be swallowed (not forwarded to real device)
-		bool on_set_pixel_shader(IDirect3DPixelShader9* shader);
+		void on_set_pixel_shader(IDirect3DPixelShader9* shader);
 
 		void on_set_texture(UINT stage, IDirect3DBaseTexture9* texture);
 		void on_set_stream_source(UINT stream, IDirect3DVertexBuffer9* vb, UINT offset, UINT stride);
@@ -109,7 +108,6 @@ namespace shared::common
 		// Dirty tracking
 		bool world_dirty_ = false;
 		bool view_proj_dirty_ = false;
-		bool ps_const_dirty_ = false;
 		bool view_proj_valid_ = false;
 		bool ffp_active_ = false;
 		bool ffp_setup_ = false;

@@ -2,8 +2,6 @@
 
 namespace comp
 {
-	extern bool g_rendered_first_primitive;
-
 	namespace tex_addons
 	{
 		extern bool initialized;
@@ -138,27 +136,28 @@ namespace comp
 			projection_transform_set_ = true;
 		}
 
-		// restore vertex shader
 		void restore_vs(IDirect3DDevice9* device)
 		{
 			if (vs_set_)
 			{
 				device->SetVertexShader(vs_);
+				if (vs_) vs_->Release();
+				vs_ = nullptr;
 				vs_set_ = false;
 			}
 		}
 
-		// restore pixel shader
 		void restore_ps(IDirect3DDevice9* device)
 		{
 			if (ps_set_)
 			{
 				device->SetPixelShader(ps_);
+				if (ps_) ps_->Release();
+				ps_ = nullptr;
 				ps_set_ = false;
 			}
 		}
 
-		// restore texture at stage 0 or 1
 		void restore_texture(IDirect3DDevice9* device, const bool stage)
 		{
 			if (!stage)
@@ -166,6 +165,8 @@ namespace comp
 				if (tex0_set_)
 				{
 					device->SetTexture(0, tex0_);
+					if (tex0_) tex0_->Release();
+					tex0_ = nullptr;
 					tex0_set_ = false;
 				}
 			}
@@ -174,6 +175,8 @@ namespace comp
 				if (tex1_set_)
 				{
 					device->SetTexture(1, tex1_);
+					if (tex1_) tex1_->Release();
+					tex1_ = nullptr;
 					tex1_set_ = false;
 				}
 			}
@@ -203,11 +206,13 @@ namespace comp
 			}
 		}
 
-		// restore texture 0 transform to identity
 		void restore_texture_transform(IDirect3DDevice9* device)
 		{
-			device->SetTransform(D3DTS_TEXTURE0, &shared::globals::IDENTITY);
-			tex0_transform_set_ = false;
+			if (tex0_transform_set_)
+			{
+				device->SetTransform(D3DTS_TEXTURE0, &shared::globals::IDENTITY);
+				tex0_transform_set_ = false;
+			}
 		}
 
 		// restore saved D3DTS_VIEW
@@ -230,17 +235,10 @@ namespace comp
 			}
 		}
 
-		// restore all changes
+		// Restore saved generic state (render states, sampler states, TSS).
+		// Shaders, textures, and transforms are managed explicitly by their callers.
 		void restore_all(IDirect3DDevice9* device)
 		{
-			restore_vs(device);
-			restore_ps(device);
-			restore_texture(device, 0);
-			restore_texture(device, 1);
-			restore_texture_transform(device);
-			restore_view_transform(device);
-			restore_projection_transform(device);
-
 			for (auto& rs : saved_render_state_) {
 				device->SetRenderState(rs.first, rs.second);
 			}
@@ -254,12 +252,15 @@ namespace comp
 			}
 		}
 
-		// reset the stored context data
 		void reset_context()
 		{
+			if (vs_set_ && vs_) vs_->Release();
 			vs_ = nullptr; vs_set_ = false;
+			if (ps_set_ && ps_) ps_->Release();
 			ps_ = nullptr; ps_set_ = false;
+			if (tex0_set_ && tex0_) tex0_->Release();
 			tex0_ = nullptr; tex0_set_ = false;
+			if (tex1_set_ && tex1_) tex1_->Release();
 			tex1_ = nullptr; tex1_set_ = false;
 			tex0_transform_set_ = false;
 			view_transform_set_ = false;
@@ -358,7 +359,6 @@ namespace comp
 		HRESULT on_draw_indexed_prim(IDirect3DDevice9* dev, const D3DPRIMITIVETYPE& PrimitiveType, const INT& BaseVertexIndex, const UINT& MinVertexIndex, const UINT& NumVertices, const UINT& startIndex, const UINT& primCount);
 
 		bool m_triggered_remix_injection = false;
-		bool m_modified_draw_prim = false;
 		static inline drawcall_mod_context dc_ctx {};
 
 	private:

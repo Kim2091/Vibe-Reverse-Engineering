@@ -60,10 +60,7 @@ namespace shared::common
 		}
 
 		for (UINT i = 0; i < count; i++)
-		{
-			if (start_reg + i < 256)
-				vs_const_write_log_[start_reg + i] = 1;
-		}
+			vs_const_write_log_[start_reg + i] = 1;
 
 		// Bone palette detection (for skinning module)
 		if (config::get().skinning.enabled &&
@@ -81,7 +78,6 @@ namespace shared::common
 		if (!data || start_reg + count > 32) return;
 
 		std::memcpy(&ps_const_[start_reg * 4], data, count * 4 * sizeof(float));
-		ps_const_dirty_ = true;
 	}
 
 	void ffp_state::on_set_vertex_shader(IDirect3DVertexShader9* shader)
@@ -92,14 +88,11 @@ namespace shared::common
 		ffp_active_ = false;
 	}
 
-	bool ffp_state::on_set_pixel_shader(IDirect3DPixelShader9* shader)
+	void ffp_state::on_set_pixel_shader(IDirect3DPixelShader9* shader)
 	{
 		if (shader) shader->AddRef();
 		if (last_ps_) last_ps_->Release();
 		last_ps_ = shader;
-
-		// Swallow the call while in FFP mode (don't forward to real device)
-		return ffp_active_;
 	}
 
 	void ffp_state::on_set_texture(UINT stage, IDirect3DBaseTexture9* texture)
@@ -237,15 +230,38 @@ namespace shared::common
 	{
 		if (last_vs_) { last_vs_->Release(); last_vs_ = nullptr; }
 		if (last_ps_) { last_ps_->Release(); last_ps_ = nullptr; }
+		last_decl_ = nullptr;
+
+		// Default-pool resources (textures, VBs) are released by the game before Reset
+		std::memset(cur_texture_, 0, sizeof(cur_texture_));
+		std::memset(stream_vb_, 0, sizeof(stream_vb_));
+		std::memset(stream_offset_, 0, sizeof(stream_offset_));
+		std::memset(stream_stride_, 0, sizeof(stream_stride_));
 
 		view_proj_valid_ = false;
 		ffp_setup_ = false;
 		world_dirty_ = false;
 		view_proj_dirty_ = false;
-		ps_const_dirty_ = false;
 		ffp_active_ = false;
 		bone_start_reg_ = 0;
 		num_bones_ = 0;
+
+		cur_decl_is_skinned_ = false;
+		cur_decl_has_texcoord_ = false;
+		cur_decl_has_normal_ = false;
+		cur_decl_has_color_ = false;
+		cur_decl_has_pos_t_ = false;
+		cur_decl_texcoord_type_ = -1;
+		cur_decl_texcoord_off_ = 0;
+		cur_decl_num_weights_ = 0;
+		cur_decl_blend_weight_off_ = 0;
+		cur_decl_blend_weight_type_ = 0;
+		cur_decl_blend_indices_off_ = 0;
+		cur_decl_pos_off_ = 0;
+		cur_decl_normal_off_ = 0;
+		cur_decl_normal_type_ = -1;
+
+		std::memset(vs_const_write_log_, 0, sizeof(vs_const_write_log_));
 
 		log("FFP", "State reset");
 	}

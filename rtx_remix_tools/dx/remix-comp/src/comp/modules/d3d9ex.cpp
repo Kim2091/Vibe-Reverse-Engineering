@@ -726,8 +726,10 @@ namespace comp
 	HRESULT d3d9ex::D3D9Device::SetPixelShader(IDirect3DPixelShader9* pShader)
 	{
 		TRACE_IF_ACTIVE(trace_SetPixelShader, pShader);
-		if (shared::common::ffp_state::get().on_set_pixel_shader(pShader))
-			return S_OK; // swallowed while FFP is active
+		auto& ffp = shared::common::ffp_state::get();
+		ffp.on_set_pixel_shader(pShader);
+		if (ffp.is_ffp_active())
+			return S_OK;
 		return m_pIDirect3DDevice9->SetPixelShader(pShader);
 	}
 

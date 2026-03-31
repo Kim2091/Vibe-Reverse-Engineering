@@ -69,6 +69,18 @@ namespace shared::common
 		ffp.vs_regs_per_bone = get_int("FFP.Registers", "RegsPerBone", 3);
 		ffp.vs_bone_min_regs = get_int("FFP.Registers", "BoneMinRegs", 3);
 
+		// Validate register ranges (matrix starts index into vs_const_[256*4])
+		auto clamp = [](int val, int lo, int hi, int def) { return (val >= lo && val <= hi) ? val : def; };
+		ffp.vs_reg_view_start  = clamp(ffp.vs_reg_view_start,  0, 252, 0);
+		ffp.vs_reg_view_end    = clamp(ffp.vs_reg_view_end,    0, 256, 4);
+		ffp.vs_reg_proj_start  = clamp(ffp.vs_reg_proj_start,  0, 252, 4);
+		ffp.vs_reg_proj_end    = clamp(ffp.vs_reg_proj_end,    0, 256, 8);
+		ffp.vs_reg_world_start = clamp(ffp.vs_reg_world_start, 0, 252, 16);
+		ffp.vs_reg_world_end   = clamp(ffp.vs_reg_world_end,   0, 256, 20);
+		ffp.vs_reg_bone_threshold = clamp(ffp.vs_reg_bone_threshold, 0, 255, 20);
+		ffp.vs_regs_per_bone   = clamp(ffp.vs_regs_per_bone,   1, 16,  3);
+		ffp.vs_bone_min_regs   = clamp(ffp.vs_bone_min_regs,   1, 256, 3);
+
 		// [Skinning]
 		skinning.enabled = get_bool("Skinning", "Enabled", false);
 

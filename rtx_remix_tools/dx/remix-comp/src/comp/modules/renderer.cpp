@@ -7,9 +7,6 @@
 
 namespace comp
 {
-	bool g_rendered_first_primitive = false;
-	int g_is_rendering_something = 0;
-
 	namespace tex_addons
 	{
 		bool initialized = false;
@@ -53,10 +50,6 @@ namespace comp
 
 	HRESULT renderer::on_draw_primitive(IDirect3DDevice9* dev, const D3DPRIMITIVETYPE& PrimitiveType, const UINT& StartVertex, const UINT& PrimitiveCount)
 	{
-		if (!g_rendered_first_primitive) {
-			g_rendered_first_primitive = true;
-		}
-
 		if (!is_initialized() || shared::globals::imgui_is_rendering) {
 			return dev->DrawPrimitive(PrimitiveType, StartVertex, PrimitiveCount);
 		}
@@ -155,8 +148,8 @@ namespace comp
 		}
 		else if (ffp.cur_decl_is_skinned())
 		{
-			// Skinned mesh: passthrough with shaders (skinning module handles this when enabled)
-			// TODO: when skinning module is implemented, call skinning::get()->draw_skinned_dip() here
+			// Skinned mesh: passthrough with shaders.
+			// GAME-SPECIFIC: wire up skinning::get()->draw_skinned_dip() here when enabling skinning for this game.
 			ffp.disengage(dev);
 			hr = dev->DrawIndexedPrimitive(PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
 			im->m_stats._drawcall_indexed_prim.track_single();
@@ -209,6 +202,10 @@ namespace comp
 			ctx.save_rs(dev, D3DRS_ZWRITEENABLE);
 			dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
 
+			IDirect3DVertexDeclaration9* saved_decl = nullptr;
+			dev->GetVertexDeclaration(&saved_decl);
+			dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+
 			struct CUSTOMVERTEX
 			{
 				float x, y, z, rhw;
@@ -229,6 +226,12 @@ namespace comp
 
 			dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(CUSTOMVERTEX));
 
+			if (saved_decl)
+			{
+				dev->SetVertexDeclaration(saved_decl);
+				saved_decl->Release();
+			}
+
 			ctx.restore_vs(dev);
 			ctx.restore_ps(dev);
 			ctx.restore_render_state(dev, D3DRS_ZWRITEENABLE);
@@ -236,33 +239,6 @@ namespace comp
 		}
 	}
 
-
-	// ---
-	// GAME-SPECIFIC: Assembly stubs for per-object hooks.
-	// Use these when you need to detect render boundaries (e.g., "all skinned draws
-	// happen between these two function calls") to set g_is_rendering_something.
-
-	/*__declspec (naked) void pre_render_something_stub()
-	{
-		__asm
-		{
-			mov     ebx, ecx;
-			cmp     eax, 0xFFFFFFFF;
-			mov		g_is_rendering_something, 1;
-			jmp		game::retn_addr__pre_draw_something;
-		}
-	}*/
-
-	/*__declspec (naked) void post_render__something_stub()
-	{
-		__asm
-		{
-			mov		g_is_rendering_something, 0;
-			retn    0x10;
-		}
-	}*/
-
-	// ---
 
 	renderer::renderer()
 	{
