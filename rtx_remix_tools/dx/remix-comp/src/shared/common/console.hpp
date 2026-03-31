@@ -1,5 +1,6 @@
 #pragma once
 #include "shared/globals.hpp"
+#include <filesystem>
 
 namespace shared::common
 {
@@ -133,7 +134,9 @@ namespace shared::common
 		{
 			log_file_initiated = true;
 
-			const std::string file_path = shared::globals::root_path + "\\rtx_comp\\logfile.txt";
+			const std::string dir_path = shared::globals::root_path + "\\rtx_comp";
+			std::filesystem::create_directories(dir_path);
+			const std::string file_path = dir_path + "\\logfile.txt";
 			log_file.open(file_path, std::ios::out | std::ios::trunc);
 		}
 	}
