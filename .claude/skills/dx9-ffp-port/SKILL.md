@@ -1,11 +1,17 @@
 ---
 name: dx9-ffp-port
-description: DX9 shader-to-FFP proxy porting for RTX Remix compatibility. Use when porting a DX9 shader-based game to the fixed-function pipeline so RTX Remix can inject path-traced lighting. Covers the full workflow: static analysis with scripts, discovering VS constant register layout, dynamic live tracing of SetVertexShaderConstantF, editing remix-comp.ini with register mappings, customizing draw routing in renderer.cpp, building with Premake5/VS2022, deploying and iterating with ffp_proxy.log and ImGui (F4). Includes draw call routing logic, common pitfalls, and skinning guidance.
+description: DX9 shader-to-FFP proxy porting for RTX Remix compatibility. Use when porting a DX9 shader-based game to the fixed-function pipeline so RTX Remix can inject path-traced lighting. Covers the full workflow: static analysis with scripts, discovering VS constant register layout, dynamic live tracing of SetVertexShaderConstantF, editing remix-comp.ini with register mappings, customizing draw routing in renderer.cpp, building with Premake5/VS2022, deploying and iterating with diagnostics.log and ImGui (F4). Includes draw call routing logic, common pitfalls, and skinning guidance.
 ---
 
 # DX9 FFP Proxy -- Game Porting
 
 Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix compatibility. Remix requires FFP geometry to inject path-traced lighting and replaceable assets.
+
+**NEVER MODIFY TEMPLATE CODE.** The following directories are read-only templates:
+- `rtx_remix_tools/dx/remix-comp/` — remix-comp framework template
+- `retools/asi_patcher.py` and `retools/asi_patcher/` — ASI patcher tooling
+
+To create a game patch, **copy** the template to `patches/<GameName>/` and edit the copy. If the user asks you to edit remix-comp code, always confirm whether they mean the template or a game-specific copy under `patches/`. Only modify the template if the user **explicitly** says to change the template itself.
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning in `remix-comp.ini`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
@@ -39,7 +45,7 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/comp/comp.cpp` | Module init: registers renderer, diagnostics, skinning, imgui |
 | `src/comp/modules/d3d9ex.cpp` | `IDirect3DDevice9` / `IDirect3D9` wrapper -- intercepts all 119 methods |
 | `src/comp/modules/d3d9ex.hpp` | D3D9 wrapper class declarations |
-| `src/comp/modules/diagnostics.cpp` | 50-sec delay, 3-frame diagnostic log to `ffp_proxy.log` |
+| `src/comp/modules/diagnostics.cpp` | 50-sec delay, 3-frame diagnostic log to `rtx_comp/diagnostics.log` |
 | `src/comp/modules/skinning.cpp` | Optional skinning module (vertex expansion + bone upload) |
 | `src/comp/modules/skinning.hpp` | Skinning class declaration |
 | `src/comp/modules/imgui.cpp` | ImGui debug overlay (F4) with FFP tab |
@@ -108,8 +114,8 @@ python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map
 
 **IMPORTANT:** `rtx_remix_tools/dx/remix-comp/` is the **template**. NEVER edit it directly. Each game gets a full copy of the framework.
 
-1. Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/` and `src/comp/`)
-2. The template `src/comp/` is already included — edit it directly in the game's copy
+1. Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`)
+2. Edit `src/comp/` directly in the game's copy — this is the per-game customization layer
 3. Edit `remix-comp.ini` (at the game root) with discovered register layout (see INI Config section below)
 4. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
 5. Customize `src/comp/modules/renderer.cpp` draw routing if needed (see Decision Trees below)
@@ -134,7 +140,7 @@ The build produces `<GameName>-comp.asi` and `dinput8.dll` in `patches/<GameName
 
 ### Step 5: Diagnose with Log and ImGui
 
-**ffp_proxy.log:** Written to the game directory after a configurable delay (default 50 seconds), then logs 3 frames of detailed draw call data:
+**rtx_comp/diagnostics.log:** Written to the `rtx_comp/` subfolder of the game directory after a configurable delay (default 50 seconds), then logs 3 frames of detailed draw call data:
 
 - **VS regs written**: which constant registers the game actually fills
 - **Vertex declarations**: what vertex elements each draw uses

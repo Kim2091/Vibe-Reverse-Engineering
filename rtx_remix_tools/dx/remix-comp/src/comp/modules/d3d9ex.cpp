@@ -5,6 +5,7 @@
 #include "renderer.hpp"
 #include "tracer.hpp"
 #include "diagnostics.hpp"
+#include "skinning.hpp"
 #include "shared/common/shader_cache.hpp"
 
 using comp::tracer;
@@ -126,6 +127,7 @@ namespace comp
 		TRACE_IF_ACTIVE(trace_Reset, pPresentationParameters);
 		if (auto* t = tracer::get()) t->on_reset();
 		shared::common::ffp_state::get().on_reset();
+		if (auto* s = skinning::get()) s->on_reset();
 		shared::common::g_shader_cache.clear_cache();
 		tex_addons::init_texture_addons(true);
 		ImGui_ImplDX9_InvalidateDeviceObjects();

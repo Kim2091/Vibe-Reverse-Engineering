@@ -7,6 +7,8 @@ paths:
 
 # remix-comp: Context Guide
 
+**`rtx_remix_tools/dx/remix-comp/` is the READ-ONLY TEMPLATE.** Never modify it unless explicitly asked. Per-game work goes in `patches/<GameName>/`.
+
 Each game folder under `patches/<Game>/` is a self-contained remix-comp project. All paths below are relative to the game folder root (e.g. `patches/FNV/`) or to the framework template at `rtx_remix_tools/dx/remix-comp/`.
 
 ## Do Not Read
@@ -57,7 +59,7 @@ The files that matter for per-game FFP porting work (~1,200 lines total):
 | `src/comp/game/structs.hpp` | 12 | Per-game data structures |
 
 ### Read only when relevant
-- `src/comp/modules/diagnostics.cpp/hpp` — Frame logger to `ffp_proxy.log`. Read when debugging log output.
+- `src/comp/modules/diagnostics.cpp/hpp` — Frame logger to `rtx_comp/diagnostics.log`. Read when debugging log output.
 - `src/comp/modules/skinning.cpp/hpp` — Skinned mesh FFP conversion. Read only if user asks about skinning.
 - `src/comp/modules/imgui.cpp/hpp` — Debug overlay (F4). Read only if debugging ImGui.
 - `src/comp/modules/tracer.cpp/hpp` — JSONL D3D9 call recorder. Read only if working on tracer features.

@@ -1,5 +1,18 @@
 # Vibe Reverse Engineering -- Claude Code Instructions
 
+## Read-Only Templates
+
+These directories are **templates** shared across all game projects. **NEVER modify them** unless the user explicitly asks to change the template itself:
+
+- `rtx_remix_tools/` — remix-comp framework, DX analysis scripts, ASI patcher tooling
+- `retools/` — static analysis toolkit (decompiler, search, sigdb, etc.)
+- `livetools/` — Frida-based dynamic analysis
+- `graphics/` — DX9 tracer framework
+
+**Per-game work goes in `patches/<GameName>/`.** When starting a new game, copy `rtx_remix_tools/dx/remix-comp/` (excluding `build/`) to `patches/<GameName>/` and edit the copy. If the user says "edit remix-comp code" without specifying, ask whether they mean the template or a game copy.
+
+---
+
 ## Delegation Rule
 
 **Never run static analysis tools directly.** Delegate to a `static-analyzer` subagent. Only exceptions — run these inline:

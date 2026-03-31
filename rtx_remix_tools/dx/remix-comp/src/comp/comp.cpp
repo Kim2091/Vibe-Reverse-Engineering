@@ -68,17 +68,17 @@ namespace comp
 		}
 
 
-		// Actual camera setup here if matrices are available
-		{
-			shared::globals::d3d_device->SetTransform(D3DTS_WORLD, &shared::globals::IDENTITY); // does not hurt
+		// Safe because ffp_state::apply_transforms overwrites WORLD per-draw when world_dirty_.
+		// Games that write world constants every frame (the common case) will never see this identity.
+		// Remove if your game sets world constants once and reuses across frames.
+		shared::globals::d3d_device->SetTransform(D3DTS_WORLD, &shared::globals::IDENTITY);
 
-			// Example code if you managed to find some kind of matrix struct
-				//if (const auto viewport = game::vp; viewport)
-				//{
-				//	shared::globals::d3d_device->SetTransform(D3DTS_VIEW, &viewport->view);
-				//	shared::globals::d3d_device->SetTransform(D3DTS_PROJECTION, &viewport->proj);
-				//}
-		}
+		// Example: if you found a game struct with view/proj matrices, apply them here
+		//if (const auto viewport = game::vp; viewport)
+		//{
+		//	shared::globals::d3d_device->SetTransform(D3DTS_VIEW, &viewport->view);
+		//	shared::globals::d3d_device->SetTransform(D3DTS_PROJECTION, &viewport->proj);
+		//}
 	}
 
 

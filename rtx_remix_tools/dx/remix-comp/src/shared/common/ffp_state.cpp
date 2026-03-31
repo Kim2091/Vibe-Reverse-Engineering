@@ -46,8 +46,9 @@ namespace shared::common
 		auto proj_start = static_cast<UINT>(cfg_->vs_reg_proj_start);
 		auto proj_end = static_cast<UINT>(cfg_->vs_reg_proj_end);
 
-		if (start_reg <= proj_start && start_reg + count >= proj_end)
+		if (start_reg <= view_start && end_reg >= proj_end)
 		{
+			// Single write spans both View and Proj ranges
 			view_proj_valid_ = true;
 		}
 		else if (start_reg == view_start && count >= 4 && vs_const_write_log_[proj_start])
@@ -140,7 +141,6 @@ namespace shared::common
 
 		bool has_blend_weight = false;
 		bool has_blend_indices = false;
-		BYTE blend_weight_type = 0;
 
 		for (UINT e = 0; e < num_elems; e++)
 		{
@@ -155,7 +155,6 @@ namespace shared::common
 
 			case D3DDECLUSAGE_BLENDWEIGHT:
 				has_blend_weight = true;
-				blend_weight_type = el.Type;
 				cur_decl_blend_weight_off_ = el.Offset;
 				cur_decl_blend_weight_type_ = el.Type;
 				break;
@@ -198,7 +197,7 @@ namespace shared::common
 		{
 			cur_decl_is_skinned_ = true;
 
-			switch (blend_weight_type)
+			switch (cur_decl_blend_weight_type_)
 			{
 			case D3DDECLTYPE_FLOAT1:  cur_decl_num_weights_ = 1; break;
 			case D3DDECLTYPE_FLOAT2:  cur_decl_num_weights_ = 2; break;
@@ -216,6 +215,8 @@ namespace shared::common
 		ffp_setup_ = false;
 		draw_call_count_ = 0;
 		scene_count_ = 0;
+		// Safety net: restore shaders if a draw path exited without calling disengage.
+		// No-op when already disengaged (the normal case).
 		disengage(shared::globals::d3d_device);
 		std::memset(vs_const_write_log_, 0, sizeof(vs_const_write_log_));
 	}
