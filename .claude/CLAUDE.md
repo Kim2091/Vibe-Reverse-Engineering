@@ -86,6 +86,7 @@ Each file reads as if it was always designed this way. Comments guide the next d
 
 ## References
 
-- **Tool catalog, decision guide, and caveats**: @.claude/rules/tool-catalog.md
+- **Tool dispatch (which tool, run vs delegate)**: @.claude/rules/tool-dispatch.md
+- **Full tool syntax tables and caveats**: `.claude/references/tool-catalog.md` (read on demand, not auto-loaded)
 - **Subagent workflow and delegation rules**: @.claude/rules/subagent-workflow.md
 - **DX9 FFP proxy porting for RTX Remix**: @.claude/skills/dx9-ffp-port/SKILL.md
