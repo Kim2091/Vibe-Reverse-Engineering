@@ -12,6 +12,8 @@ Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix comp
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
+**SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, keep BLENDINDICES and BLENDWEIGHT in the vertex declaration and buffer, upload bone matrices via `SetTransform(D3DTS_WORLDMATRIX(n), &boneMatrix[n])`, enable `D3DRS_INDEXEDVERTEXBLENDENABLE = TRUE`, and set `D3DRS_VERTEXBLEND` to the weight count. CPU-side vertex skinning is a **last resort** -- it is extremely expensive and tanks frame rate. Always prefer the hardware path.
+
 ---
 
 ## What remix-comp Does

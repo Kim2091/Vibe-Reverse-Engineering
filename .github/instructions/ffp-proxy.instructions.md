@@ -8,6 +8,8 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp`.
 
+**SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, keep BLENDINDICES and BLENDWEIGHT in the vertex declaration and buffer, upload bone matrices via `SetTransform(D3DTS_WORLDMATRIX(n), &boneMatrix[n])`, enable `D3DRS_INDEXEDVERTEXBLENDENABLE = TRUE`, and set `D3DRS_VERTEXBLEND` to the weight count. CPU-side vertex skinning is a **last resort** -- it is extremely expensive and tanks frame rate. Always prefer the hardware path.
+
 ## Source File Map
 
 | File | Role |
@@ -69,6 +71,8 @@ python rtx_remix_tools/dx/scripts/classify_draws.py "<game.exe>"
 Scripts are fast first-pass scanners -- follow up with `retools` and `livetools`.
 
 ### Step 2: Discover VS Constant Register Layout (MOST CRITICAL)
+
+**Remix REQUIRES separate World, View, and Projection matrices.** A concatenated WVP will NOT work. If the game uploads a pre-multiplied WorldViewProj, the proxy must intercept individual matrices before concatenation. Start with `find_matrix_registers.py` to detect this.
 
 **Static**: Decompile `SetVertexShaderConstantF` call sites with `retools.decompiler --types kb.h`.
 

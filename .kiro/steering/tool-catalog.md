@@ -72,6 +72,7 @@ These are targeted D3D9 scanners under `rtx_remix_tools/dx/scripts/`. They run i
 - "What vertex formats does the game use?" → `decode_vtx_decls.py <game.exe> --scan` (vertex declarations, detects skinning)
 - "Are shaders embedded in the binary?" → `find_shader_bytecode.py <game.exe>` (shader bytecode extraction with version/size)
 - "What's the FFP vs shader draw call mix?" → `classify_draws.py <game.exe>` (draw call classification by state context)
+- "Which registers are View/Proj/World?" → `find_matrix_registers.py <game.exe>` (CTAB names + frequency heuristics + layout suggestion)
 - "D3DX constant table or vtable calls?" → `find_vtable_calls.py <game.exe>` (D3DX CTAB usage + D3D9 vtable calls)
 - "Map all D3D calls in a code region" → `scan_d3d_region.py <game.exe> 0xSTART 0xEND`
 
@@ -250,6 +251,7 @@ Targeted first-pass scanners for D3D9 games. Run from repo root. Output is candi
 | `decode_vtx_decls.py $B --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES = skinning) | `python rtx_remix_tools/dx/scripts/decode_vtx_decls.py game.exe --scan` |
 | `find_shader_bytecode.py $B` | Embedded shader bytecode extraction (version, size, `--dump-dir`) | `python rtx_remix_tools/dx/scripts/find_shader_bytecode.py game.exe` |
 | `classify_draws.py $B` | Draw call classification by state context (FFP/shader/hybrid %) | `python rtx_remix_tools/dx/scripts/classify_draws.py game.exe` |
+| `find_matrix_registers.py $B` | Identify View/Proj/World registers (CTAB + frequency + layout suggestion) | `python rtx_remix_tools/dx/scripts/find_matrix_registers.py game.exe` |
 | `scan_d3d_region.py $B 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region | `python rtx_remix_tools/dx/scripts/scan_d3d_region.py game.exe 0x401000 0x500000` |
 
 ## Tool Caveats

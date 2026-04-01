@@ -15,6 +15,15 @@ To create a game patch, **copy** the template to `patches/<GameName>/` and edit 
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning in `remix-comp.ini`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
+**SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, the correct approach is:
+1. Keep BLENDINDICES and BLENDWEIGHT elements in the vertex declaration and vertex buffer
+2. Upload bone matrices via `SetTransform(D3DTS_WORLDMATRIX(n), &boneMatrix[n])` for each bone
+3. Enable `D3DRS_INDEXEDVERTEXBLENDENABLE = TRUE`
+4. Set `D3DRS_VERTEXBLEND` to the appropriate weight count (e.g. `D3DVBF_3WEIGHTS`)
+5. Let the FFP hardware pipeline do the blending
+
+CPU-side vertex skinning (manually multiplying vertices by bone matrices) is a **last resort only**. It is extremely expensive, tanks frame rate, and should only be considered when FFP indexed vertex blending is not feasible. Always prefer the hardware path above.
+
 ---
 
 ## What remix-comp Does
@@ -99,6 +108,14 @@ Key things to find:
 
 This is the **most critical** step. Determine which VS constant registers hold View, Projection, and World matrices.
 
+**Remix REQUIRES separate World, View, and Projection matrices.** A concatenated WorldViewProj (WVP) or ViewProj (VP) matrix will NOT work -- Remix needs individual matrices to apply its own camera and per-object transforms. If the game uploads a pre-multiplied WVP, the proxy must intercept the individual W, V, P matrices *before* the game concatenates them. This is the #1 source of broken Remix ports.
+
+**Start with the matrix register finder:**
+```bash
+python rtx_remix_tools/dx/scripts/find_matrix_registers.py "<game.exe>"
+```
+This cross-references SVSCF call patterns, shader CTAB names, and frequency analysis to suggest a register layout. Always verify its output with runtime data.
+
 **Static approach:** Decompile call sites:
 ```bash
 python -m retools.decompiler <game.exe> <call_site_addr> --types patches/<project>/kb.h
@@ -123,6 +140,7 @@ python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map
 - Projection matrix: contains aspect ratio and FOV; rarely changes
 - World matrix: changes per object; contains position/rotation/scale
 - Look for 4x4 matrices (16 floats = 4 registers). Row 3 often has `[0, 0, 0, 1]` for affine transforms.
+- **Watch for concatenated matrices:** If the game only uploads one matrix per draw (e.g. WVP at c0-c3), the individual W/V/P are being multiplied before upload. Trace back to find where the multiplication happens -- you need to capture W, V, P separately before that point.
 
 ### Step 3: Set Up Per-Game Project
 
@@ -267,6 +285,7 @@ AND !ffp.cur_decl_has_pos_t() AND !ffp.cur_decl_is_skinned()?
 
 ## Common Pitfalls
 
+- **Concatenated WVP/VP instead of separate matrices**: This is the **#1 Remix porting mistake**. Remix requires separate World, View, and Projection matrices passed via `SetTransform`. If the game uploads a pre-multiplied WorldViewProj or ViewProj to a single register range, the proxy gets a combined matrix it can't decompose. **Fix**: find where the game multiplies W*V*P (or V*P) and hook that function to capture the individual matrices *before* concatenation. Use `find_matrix_registers.py` to detect this -- if CTAB shows "WorldViewProj" or only one matrix register is uploaded per draw, you have this problem.
 - **Matrices look wrong**: D3D9 FFP `SetTransform` expects row-major. `ffp_state::apply_transforms` transposes column-major VS constants. If the game stores matrices row-major in VS constants (uncommon), remove the transpose in `ffp_state::apply_transforms`.
 - **Everything is white/black**: Albedo texture is on stage 1+, not stage 0. Set `AlbedoStage` in `remix-comp.ini`, or trace `SetTexture` calls to find the correct stage.
 - **Some objects render, others don't**: Check whether missing geometry has NORMAL in its vertex decl. Check `ffp.view_proj_valid()` is true at draw time. DrawPrimitive routes on decl presence + no POSITIONT + not skinned.

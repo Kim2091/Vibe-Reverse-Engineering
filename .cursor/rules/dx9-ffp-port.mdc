@@ -9,6 +9,8 @@ You are helping a user port a DX9 shader-based game to the fixed-function pipeli
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. Until then, treat skinning as non-existent. When the user does request it, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
+**SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, keep BLENDINDICES and BLENDWEIGHT in the vertex declaration and buffer, upload bone matrices via `SetTransform(D3DTS_WORLDMATRIX(n), &boneMatrix[n])`, enable `D3DRS_INDEXEDVERTEXBLENDENABLE = TRUE`, and set `D3DRS_VERTEXBLEND` to the weight count. CPU-side vertex skinning is a **last resort** -- it is extremely expensive and tanks frame rate. Always prefer the hardware path.
+
 ---
 
 ## What remix-comp Does
@@ -256,12 +258,14 @@ The scripts below are fast first-pass scanners. They surface candidate addresses
 | `scripts/decode_vtx_decls.py <game.exe> --scan` | Vertex declaration formats (BLENDWEIGHT/BLENDINDICES -> skinning) |
 | `scripts/find_shader_bytecode.py <game.exe>` | Embedded shader bytecode extraction (version, size) |
 | `scripts/classify_draws.py <game.exe>` | Draw call classification by state context (FFP/shader/hybrid) |
+| `scripts/find_matrix_registers.py <game.exe>` | Identify View/Proj/World registers (CTAB + frequency + layout suggestion) |
 | `scripts/scan_d3d_region.py <game.exe> 0xSTART 0xEND` | Map all D3D9 vtable calls in a code region |
 
 Scripts are at `rtx_remix_tools/dx/scripts/`.
 
 ## Common Pitfalls
 
+- **Concatenated WVP/VP instead of separate matrices**: This is the **#1 Remix porting mistake**. Remix requires separate World, View, and Projection matrices passed via `SetTransform`. If the game uploads a pre-multiplied WorldViewProj or ViewProj to a single register range, the proxy gets a combined matrix it can't decompose. **Fix**: find where the game multiplies W*V*P and hook to capture individual matrices *before* concatenation. Use `find_matrix_registers.py` to detect this.
 - **Matrices look wrong**: D3D9 FFP `SetTransform` expects row-major matrices. The proxy transposes them. If the game stores matrices column-major in VS constants (the common case), the transpose is correct. If the game is already row-major, remove the transpose in `ffp_state::apply_transforms()`.
 - **Everything is white/black**: The game's albedo texture might be on stage 1+ instead of stage 0. Set `AlbedoStage` in `remix-comp.ini` `[FFP]` section, or trace `SetTexture` calls to find the pattern.
 - **Some objects render, others don't**: `on_draw_primitive()` routes by vertex declaration -- world-space draws (have decl, no POSITIONT, not skinned) engage FFP; screen-space/no-decl pass through. `on_draw_indexed_prim()` additionally filters out draws without NORMAL as likely HUD/UI. If world geometry is missing, check whether its vertex decl has NORMAL and whether `view_proj_valid()` is true when those draws happen.

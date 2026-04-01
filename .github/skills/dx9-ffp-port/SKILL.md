@@ -10,6 +10,8 @@ You are helping a user port a DX9 shader-based game to the fixed-function pipeli
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. Until then, treat skinning as non-existent. When the user does request it, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
+**SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, keep BLENDINDICES and BLENDWEIGHT in the vertex declaration and buffer, upload bone matrices via `SetTransform(D3DTS_WORLDMATRIX(n), &boneMatrix[n])`, enable `D3DRS_INDEXEDVERTEXBLENDENABLE = TRUE`, and set `D3DRS_VERTEXBLEND` to the weight count. CPU-side vertex skinning is a **last resort** -- it is extremely expensive and tanks frame rate. Always prefer the hardware path.
+
 ---
 
 ## What remix-comp Does
@@ -104,6 +106,8 @@ Key things to find:
 ### Step 2: Discover VS Constant Layout
 
 This is the **most critical** step. You must determine which VS constant registers hold View, Projection, and World matrices.
+
+**Remix REQUIRES separate World, View, and Projection matrices.** A concatenated WorldViewProj (WVP) or ViewProj (VP) will NOT work -- Remix needs individual matrices for its own camera and per-object transforms. If the game uploads a pre-multiplied WVP, the proxy must intercept the individual matrices *before* concatenation. This is the #1 source of broken Remix ports. Use `find_matrix_registers.py` to detect this pattern.
 
 **Static approach:** Decompile functions that call `SetVertexShaderConstantF`:
 ```bash

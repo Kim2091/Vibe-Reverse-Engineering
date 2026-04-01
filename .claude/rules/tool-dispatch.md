@@ -51,6 +51,7 @@ Under `rtx_remix_tools/dx/scripts/`. Use BEFORE retools for D3D9 questions.
 - `decode_vtx_decls.py $B --scan` — vertex declaration formats
 - `find_shader_bytecode.py $B` — embedded shader bytecode extraction
 - `classify_draws.py $B` — draw call classification (FFP/shader/hybrid)
+- `find_matrix_registers.py $B` — identify View/Proj/World matrix registers (CTAB + frequency)
 - `scan_d3d_region.py $B 0xSTART 0xEND` — D3D calls in code region
 
 ## dx9tracer
