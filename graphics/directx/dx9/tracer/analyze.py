@@ -1628,7 +1628,7 @@ def do_state_snapshot(records: list[dict], draw_index: int) -> None:
             vals = state.vs_constants[reg]
             name = reg_name_lookup.get(reg, "")
             name_str = f"  ({name})" if name else ""
-            fvals = " ".join(f"{v:10.4f}" if isinstance(v, float) else f"{v:>10}" for v in vals)
+            fvals = " ".join(f"{v:10.4f}" if isinstance(v, float) else f"{str(v):>10}" for v in vals)
             print(f"    c{reg:<3d} = [{fvals}]{name_str}")
 
     # PS Constants with CTAB names
@@ -1639,7 +1639,7 @@ def do_state_snapshot(records: list[dict], draw_index: int) -> None:
             vals = state.ps_constants[reg]
             name = reg_name_lookup.get(reg, "")
             name_str = f"  ({name})" if name else ""
-            fvals = " ".join(f"{v:10.4f}" if isinstance(v, float) else f"{v:>10}" for v in vals)
+            fvals = " ".join(f"{v:10.4f}" if isinstance(v, float) else f"{str(v):>10}" for v in vals)
             print(f"    c{reg:<3d} = [{fvals}]{name_str}")
 
     # Textures

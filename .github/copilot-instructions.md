@@ -18,7 +18,7 @@ Run `python verify_install.py` from the repo root before first use. If pyghidra/
 **Never run static analysis tools (`retools`) directly in sequence.** Delegate to the `static-analyzer` agent for all offline analysis. Exceptions — run these inline (all <5s):
 
 - `sigdb.py identify` / `fingerprint` — single-function ID or compiler detection
-- `context.py assemble` / `postprocess` — context gathering and decompiler annotation (assemble now includes forward constant propagation by default; `--no-dataflow` to skip)
+- `context.py assemble` / `postprocess` — context gathering and decompiler annotation (assemble now includes forward constant propagation by default; use `--no-dataflow` on large functions)
 - `dataflow.py --constants` / `--slice` — single-function constant propagation or backward register trace
 - `readmem.py` — single typed read from a PE file
 - `asi_patcher.py build` — build step, not analysis

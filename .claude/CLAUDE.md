@@ -1,10 +1,26 @@
 # Vibe Reverse Engineering -- Claude Code Instructions
 
+## Read-Only Templates
+
+These directories are **shared tooling and templates**. Do not modify them for game-specific work — per-game changes go in `patches/<GameName>/`.
+
+- `rtx_remix_tools/dx/remix-comp-proxy/` — proxy framework **template** (copied per-game)
+- `rtx_remix_tools/dx/scripts/` — DX9 analysis scripts (shared tooling)
+- `retools/` — static analysis toolkit (shared tooling)
+- `livetools/` — Frida-based dynamic analysis (shared tooling)
+- `graphics/` — DX9 tracer framework (shared tooling)
+
+**Per-game work goes in `patches/<GameName>/`.** When starting a new game, copy `rtx_remix_tools/dx/remix-comp-proxy/` (excluding `build/`) to `patches/<GameName>/` and edit the copy. If the user says "edit remix-comp-proxy code" without specifying, ask whether they mean the template or a game copy.
+
+Shared tooling can be modified to improve the tools themselves — just not for game-specific customization.
+
+---
+
 ## Delegation Rule
 
 **Never run static analysis tools directly.** Delegate to a `static-analyzer` subagent. Only exceptions — run these inline:
 - `sigdb.py identify` / `fingerprint` (single-function ID, <5s)
-- `context.py assemble` / `postprocess` (context gathering, <5s)
+- `context.py assemble` / `postprocess` (context gathering, <5s; use `--no-dataflow` on large functions)
 - `dataflow.py --constants` / `--slice` (single-function analysis, <5s)
 - `readmem.py` (single typed read from PE, <5s)
 - `asi_patcher.py build` (build step, not analysis)
@@ -72,9 +88,20 @@ Each file reads as if it was always designed this way. Comments guide the next d
 
 ---
 
+## DX9 FFP Porting
+
+When working on any of the following — invoke the **`dx9-ffp-port` skill** immediately before starting:
+- Editing `renderer.cpp`, `ffp_state.cpp`, `remix-comp-proxy.ini`, or draw routing logic
+- Porting a game for RTX Remix / fixed-function pipeline
+- Diagnosing VS constant registers, vertex declarations, matrix mapping, skinning
+- Building, deploying, or iterating on a remix-comp-proxy patch (`build.bat`, `diagnostics.log`, ImGui F4)
+
+---
+
 ## References
 
-- **Tool catalog, decision guide, and caveats**: @.claude/rules/tool-catalog.md
+- **Tool dispatch (which tool, run vs delegate)**: @.claude/rules/tool-dispatch.md
+- **Full tool syntax tables and caveats**: `.claude/references/tool-catalog.md` (read on demand, not auto-loaded)
 - **Subagent workflow and delegation rules**: @.claude/rules/subagent-workflow.md
-- **DX9 FFP proxy porting for RTX Remix**: `/dx9-ffp-port` skill
+- **DX9 FFP proxy porting for RTX Remix**: `.claude/skills/dx9-ffp-port/SKILL.md` (invoke `dx9-ffp-port` skill, not auto-loaded)
 - **Frida-based dynamic analysis**: `/dynamic-analysis` skill

@@ -154,6 +154,47 @@ class TestPropagateCfg:
         assert isinstance(result[0x401000]["eax"], Const)
         assert result[0x401000]["eax"].value == 5
 
+    def test_branch_merges_to_unknown(self):
+        """At a merge point after a branch, conflicting values become Unknown."""
+        from dataflow import propagate_cfg, Const, Unknown
+        from common import Binary
+        from unittest.mock import MagicMock
+
+        # Block 0 (0x401000): mov eax,5; cmp ecx,0; je block2
+        # Block 1 (0x40100A): mov eax,10  (fall-through)
+        # Block 2 (0x40100F): ret         (merge: eax=5 from je, eax=10 from fall)
+        code = (
+            b"\xB8\x05\x00\x00\x00"  # mov eax, 5
+            b"\x83\xF9\x00"          # cmp ecx, 0
+            b"\x74\x05"              # je +5 -> 0x40100F
+            b"\xB8\x0A\x00\x00\x00"  # mov eax, 10
+            b"\xC3"                   # ret
+        )
+        cs = Cs(CS_ARCH_X86, CS_MODE_32)
+        cs.detail = True
+        all_insns = list(cs.disasm(code, 0x401000))
+
+        b = MagicMock(spec=Binary)
+        b.is_64 = False
+        b.ptr_size = 4
+        b.base = 0x400000
+        b.disasm.return_value = all_insns
+        b.read_va.return_value = b""
+        b.in_exec.return_value = True
+        b.exec_ranges.return_value = [(0x401000, 0, len(code))]
+        b.find_func_start.return_value = 0x401000
+
+        result = propagate_cfg(b, 0x401000)
+
+        # Block 0 exit: eax = 5
+        assert isinstance(result[0x401000]["eax"], Const)
+        assert result[0x401000]["eax"].value == 5
+        # Block 1 exit: eax = 10
+        assert isinstance(result[0x40100A]["eax"], Const)
+        assert result[0x40100A]["eax"].value == 10
+        # Merge block: eax is Unknown (5 vs 10)
+        assert isinstance(result[0x40100F]["eax"], Unknown)
+
     def test_returns_dict_of_block_states(self):
         from dataflow import propagate_cfg
         from common import Binary
@@ -207,6 +248,78 @@ class TestBackwardSlice:
         from dataflow import backward_slice
         result = backward_slice([], 0x401000, "eax")
         assert result == []
+
+
+class TestBackwardSliceCfg:
+    def test_cross_block_slice(self):
+        """Slice should follow predecessor edges to find contributions in earlier blocks."""
+        from dataflow import backward_slice_cfg
+        from common import Binary
+        from unittest.mock import MagicMock
+
+        # Block 0 (0x401000): mov eax, 5; jmp block1
+        # Block 1 (0x401007): add eax, 3; ret
+        # Slice eax at the add — should find both mov and add.
+        code = (
+            b"\xB8\x05\x00\x00\x00"  # mov eax, 5
+            b"\xEB\x00"              # jmp +0 -> 0x401007
+            b"\x83\xC0\x03"          # add eax, 3
+            b"\xC3"                   # ret
+        )
+        cs = Cs(CS_ARCH_X86, CS_MODE_32)
+        cs.detail = True
+        all_insns = list(cs.disasm(code, 0x401000))
+
+        b = MagicMock(spec=Binary)
+        b.is_64 = False
+        b.ptr_size = 4
+        b.base = 0x400000
+        b.disasm.return_value = all_insns
+        b.read_va.return_value = b""
+        b.in_exec.return_value = True
+        b.exec_ranges.return_value = [(0x401000, 0, len(code))]
+        b.find_func_start.return_value = 0x401000
+
+        result = backward_slice_cfg(b, 0x401000, 0x401007, "eax")
+        vas = [entry[0] for entry in result]
+        assert 0x401000 in vas  # mov eax, 5 (in predecessor block)
+        assert 0x401007 in vas  # add eax, 3 (target block)
+
+    def test_branch_both_paths(self):
+        """Slice through a merge point should find contributions from both predecessors."""
+        from dataflow import backward_slice_cfg
+        from common import Binary
+        from unittest.mock import MagicMock
+
+        # Block 0 (0x401000): mov eax, 5; cmp ecx, 0; je block2
+        # Block 1 (0x40100A): mov eax, 10  (fall-through into block2)
+        # Block 2 (0x40100F): ret
+        # Slice eax at ret — should find mov eax,5 AND mov eax,10.
+        code = (
+            b"\xB8\x05\x00\x00\x00"  # mov eax, 5
+            b"\x83\xF9\x00"          # cmp ecx, 0
+            b"\x74\x05"              # je +5 -> 0x40100F
+            b"\xB8\x0A\x00\x00\x00"  # mov eax, 10
+            b"\xC3"                   # ret
+        )
+        cs = Cs(CS_ARCH_X86, CS_MODE_32)
+        cs.detail = True
+        all_insns = list(cs.disasm(code, 0x401000))
+
+        b = MagicMock(spec=Binary)
+        b.is_64 = False
+        b.ptr_size = 4
+        b.base = 0x400000
+        b.disasm.return_value = all_insns
+        b.read_va.return_value = b""
+        b.in_exec.return_value = True
+        b.exec_ranges.return_value = [(0x401000, 0, len(code))]
+        b.find_func_start.return_value = 0x401000
+
+        result = backward_slice_cfg(b, 0x401000, 0x40100F, "eax")
+        vas = [entry[0] for entry in result]
+        assert 0x401000 in vas  # mov eax, 5 (from je path)
+        assert 0x40100A in vas  # mov eax, 10 (from fall-through path)
 
 
 class TestDataflowCLI:
