@@ -5,7 +5,7 @@ alwaysApply: false
 
 # DX9 FFP Proxy — Game Porting Guide
 
-You are helping a user port a DX9 shader-based game to the fixed-function pipeline. Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from the template at `rtx_remix_tools/dx/remix-comp/`). The goal is RTX Remix compatibility: Remix requires FFP geometry to inject path-traced lighting and replaceable assets. Also use the Vibe RE tools (retools, livetools) for static and dynamic analysis to assist with developing this wrapper. They are meant to be used together.
+You are helping a user port a DX9 shader-based game to the fixed-function pipeline. Each game folder under `patches/<GameName>/` is a self-contained remix-comp-proxy project (copied from the template at `rtx_remix_tools/dx/remix-comp-proxy/`). The goal is RTX Remix compatibility: Remix requires FFP geometry to inject path-traced lighting and replaceable assets. Also use the Vibe RE tools (retools, livetools) for static and dynamic analysis to assist with developing this wrapper. They are meant to be used together.
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. Until then, treat skinning as non-existent. When the user does request it, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
@@ -13,9 +13,9 @@ You are helping a user port a DX9 shader-based game to the fixed-function pipeli
 
 ---
 
-## What remix-comp Does
+## What remix-comp-proxy Does
 
-Each game's remix-comp folder is a C++20 compatibility mod based on remix-comp-base that intercepts `IDirect3DDevice9` and:
+Each game's remix-comp-proxy folder is a C++20 compatibility mod based on remix-comp-base that intercepts `IDirect3DDevice9` and:
 
 1. Captures vertex shader constants (View, Projection, World matrices) from `SetVertexShaderConstantF`
 2. Parses `SetVertexDeclaration` to detect per-element attributes: BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets and types
@@ -44,9 +44,9 @@ Each game's remix-comp folder is a C++20 compatibility mod based on remix-comp-b
 | `src/comp/modules/imgui.cpp` | ImGui debug overlay (F4 toggle) |
 | `src/shared/common/ffp_state.cpp` | FFP state tracker -- engage/disengage, matrix transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
-| `src/shared/common/config.cpp` | INI config parser for `remix-comp.ini` |
+| `src/shared/common/config.cpp` | INI config parser for `remix-comp-proxy.ini` |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `remix-comp-proxy.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
 | `build.bat` | Build script: outputs d3d9.dll proxy |
 
 The codebase is C++20 with a `build.bat` build script, component module system for extensibility.
@@ -67,7 +67,7 @@ Beyond the INI config, users may need to modify:
 - `renderer.cpp` `on_draw_indexed_prim()` -- draw call routing (which draws get FFP vs shader pass-through)
 - `renderer.cpp` `on_draw_primitive()` -- UI/particle handling
 - `ffp_state.cpp` `setup_lighting()`, `setup_texture_stages()`, `apply_transforms()` -- FFP render state and matrix configuration
-- `AlbedoStage` in `remix-comp.ini` `[FFP]` section -- which texture stage holds the diffuse/albedo
+- `AlbedoStage` in `remix-comp-proxy.ini` `[FFP]` section -- which texture stage holds the diffuse/albedo
 
 ## Porting Workflow
 
@@ -132,7 +132,7 @@ This captures: startRegister, Vector4fCount, and the actual float data (first 4 
 
 ### Step 3: Set Up Per-Game Project
 
-Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`). The game folder is now self-contained. Edit files directly:
+Copy the entire `rtx_remix_tools/dx/remix-comp-proxy/` folder to `patches/<GameName>/` (excluding `build/`). The game folder is now self-contained. Edit files directly:
 
 1. Edit register layout defaults in `src/shared/common/ffp_state.hpp`
 2. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
@@ -147,7 +147,7 @@ cd patches/<GameName>
 build.bat release --name <GameName>
 ```
 
-Deploy to game directory: `d3d9.dll` + `remix-comp.ini`. If using Remix, also place `d3d9_remix.dll` there.
+Deploy to game directory: `d3d9.dll` + `remix-comp-proxy.ini`. If using Remix, also place `d3d9_remix.dll` there.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -171,8 +171,8 @@ Use this to iterate: wrong matrices -> re-check register mapping. Missing textur
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
 | `ffp_state.hpp` register layout defaults | **YES** -- set register layout |
-| `remix-comp.ini` `[Skinning] Enabled=` | **YES** -- only after rigid FFP works |
-| `remix-comp.ini` `[FFP] AlbedoStage=` | **YES** -- set albedo texture stage |
+| `remix-comp-proxy.ini` `[Skinning] Enabled=` | **YES** -- only after rigid FFP works |
+| `remix-comp-proxy.ini` `[FFP] AlbedoStage=` | **YES** -- set albedo texture stage |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |
 | `renderer.cpp` `on_draw_primitive()` | **YES** -- draw routing for non-indexed draws |
 | `ffp_state.cpp` `setup_lighting()`, `setup_texture_stages()`, `apply_transforms()` | MAYBE -- tweak if game needs different FFP state |
@@ -215,7 +215,7 @@ viewProjValid AND lastDecl AND !curDeclHasPosT AND !curDeclIsSkinned?
 
 ### Skinning Data Flow
 
-When skinning is enabled via `[Skinning] Enabled=1` in `remix-comp.ini`:
+When skinning is enabled via `[Skinning] Enabled=1` in `remix-comp-proxy.ini`:
 
 1. **`ffp_state::on_set_vertex_declaration()`** -- Parses `D3DVERTEXELEMENT9` array. If both BLENDWEIGHT and BLENDINDICES are present, sets `cur_decl_is_skinned_` and captures per-element byte offsets and types.
 
@@ -262,10 +262,10 @@ Scripts are at `rtx_remix_tools/dx/scripts/`.
 
 - **Concatenated WVP/VP instead of separate matrices**: This is the **#1 Remix porting mistake**. Remix requires separate World, View, and Projection matrices passed via `SetTransform`. If the game uploads a pre-multiplied WorldViewProj or ViewProj to a single register range, the proxy gets a combined matrix it can't decompose. **Fix**: find where the game multiplies W*V*P and hook to capture individual matrices *before* concatenation. Use `find_matrix_registers.py` to detect this.
 - **Matrices look wrong**: D3D9 FFP `SetTransform` expects row-major matrices. The proxy transposes them. If the game stores matrices column-major in VS constants (the common case), the transpose is correct. If the game is already row-major, remove the transpose in `ffp_state::apply_transforms()`.
-- **Everything is white/black**: The game's albedo texture might be on stage 1+ instead of stage 0. Set `AlbedoStage` in `remix-comp.ini` `[FFP]` section, or trace `SetTexture` calls to find the pattern.
+- **Everything is white/black**: The game's albedo texture might be on stage 1+ instead of stage 0. Set `AlbedoStage` in `remix-comp-proxy.ini` `[FFP]` section, or trace `SetTexture` calls to find the pattern.
 - **Some objects render, others don't**: `on_draw_primitive()` routes by vertex declaration -- world-space draws (have decl, no POSITIONT, not skinned) engage FFP; screen-space/no-decl pass through. `on_draw_indexed_prim()` additionally filters out draws without NORMAL as likely HUD/UI. If world geometry is missing, check whether its vertex decl has NORMAL and whether `view_proj_valid()` is true when those draws happen.
-- **Skinned meshes are invisible**: Enable skinning with `[Skinning] Enabled=1` in `remix-comp.ini`. Check the log for bone count and declaration issues.
-- **Game crashes on startup**: The chain-loaded Remix DLL might not be present. Set `Enabled=0` in `remix-comp.ini` `[Remix]` section to test without Remix first.
+- **Skinned meshes are invisible**: Enable skinning with `[Skinning] Enabled=1` in `remix-comp-proxy.ini`. Check the log for bone count and declaration issues.
+- **Game crashes on startup**: The chain-loaded Remix DLL might not be present. Set `Enabled=0` in `remix-comp-proxy.ini` `[Remix]` section to test without Remix first.
 - **Geometry at origin / piled up**: World matrix register mapping is wrong. Every object gets identity world transform. Re-examine VS constant writes.
 - **Characters' world geometry shifts after a skinned draw**: After uploading bone matrices, WORLDMATRIX(0) is clobbered by bone[0]. The proxy sets world dirty so `apply_transforms()` re-applies the world matrix on the next rigid draw. If this still causes issues, the bone threshold register may overlap with the world matrix register range.
 

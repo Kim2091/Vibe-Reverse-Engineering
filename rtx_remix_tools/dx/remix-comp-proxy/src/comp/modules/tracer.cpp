@@ -8,6 +8,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 
 namespace comp
 {
@@ -45,6 +46,60 @@ namespace comp
 			st.wYear, st.wMonth, st.wDay,
 			st.wHour, st.wMinute, st.wSecond);
 		return buf;
+	}
+
+	uint32_t tracer::classify_method(const char* method)
+	{
+		// Get* calls
+		if (strncmp(method, "Get", 3) == 0)
+			return TRACE_GETTERS;
+
+		// Draw calls
+		if (strncmp(method, "Draw", 4) == 0 || strcmp(method, "ProcessVertices") == 0)
+			return TRACE_DRAW;
+
+		// Scene flow
+		if (strcmp(method, "BeginScene") == 0 || strcmp(method, "EndScene") == 0 ||
+			strcmp(method, "Present") == 0 || strcmp(method, "Clear") == 0 ||
+			strcmp(method, "Reset") == 0)
+			return TRACE_SCENE;
+
+		// Shaders & shader constants
+		if (strstr(method, "Shader"))
+			return TRACE_SHADERS;
+
+		// Render state, texture stage state, sampler state, state blocks
+		if (strstr(method, "RenderState") || strstr(method, "StageState") ||
+			strstr(method, "SamplerState") || strstr(method, "StateBlock") ||
+			strcmp(method, "BeginStateBlock") == 0 || strcmp(method, "EndStateBlock") == 0)
+			return TRACE_STATE;
+
+		// Textures (SetTexture, CreateTexture, CreateVolumeTexture, CreateCubeTexture)
+		if (strcmp(method, "SetTexture") == 0 ||
+			(strncmp(method, "Create", 6) == 0 && strstr(method, "Texture")))
+			return TRACE_TEXTURES;
+
+		// Transforms, viewport, materials, lights
+		if (strstr(method, "Transform") || strstr(method, "Viewport") ||
+			strstr(method, "Material") || strstr(method, "Light") ||
+			strcmp(method, "SetClipPlane") == 0)
+			return TRACE_TRANSFORMS;
+
+		// Vertex setup: stream source, indices, FVF, vertex declarations, VB/IB creation
+		if (strstr(method, "StreamSource") || strstr(method, "Indices") ||
+			strstr(method, "FVF") || strstr(method, "VertexDeclaration") ||
+			strcmp(method, "CreateVertexBuffer") == 0 || strcmp(method, "CreateIndexBuffer") == 0 ||
+			strstr(method, "StreamSourceFreq"))
+			return TRACE_VERTEX;
+
+		// Resource creation & surface ops
+		if (strncmp(method, "Create", 6) == 0 ||
+			strstr(method, "RenderTarget") || strstr(method, "DepthStencil") ||
+			strstr(method, "Surface") || strcmp(method, "StretchRect") == 0 ||
+			strcmp(method, "ColorFill") == 0 || strcmp(method, "UpdateTexture") == 0)
+			return TRACE_RESOURCES;
+
+		return TRACE_MISC;
 	}
 
 	void tracer::start_capture(int num_frames, const std::string& filename)
@@ -120,8 +175,89 @@ namespace comp
 				frames_captured_, sequence_, last_capture_size_ / 1024.0));
 	}
 
+	void tracer::start_capture_delayed(int num_frames, const std::string& filename, float delay_seconds)
+	{
+		if (capturing_ || waiting_) return;
+
+		if (delay_seconds <= 0.0f)
+		{
+			start_capture(num_frames, filename);
+			return;
+		}
+
+		pending_frames_ = num_frames;
+		pending_filename_ = filename;
+		delay_ms_ = static_cast<DWORD>(delay_seconds * 1000.0f);
+		delay_start_tick_ = GetTickCount();
+		waiting_ = true;
+
+		shared::common::log("Tracer",
+			std::format("Capture will start in {:.1f}s", delay_seconds));
+	}
+
+	void tracer::cancel_delayed()
+	{
+		if (!waiting_) return;
+		waiting_ = false;
+		shared::common::log("Tracer", "Delayed capture cancelled");
+	}
+
+	float tracer::delay_remaining() const
+	{
+		if (!waiting_) return 0.0f;
+		DWORD elapsed = GetTickCount() - delay_start_tick_;
+		if (elapsed >= delay_ms_) return 0.0f;
+		return static_cast<float>(delay_ms_ - elapsed) / 1000.0f;
+	}
+
+	void tracer::check_trigger_file()
+	{
+		std::string trigger_path = shared::globals::root_path + "\\dxtrace_capture.trigger";
+		DWORD attr = GetFileAttributesA(trigger_path.c_str());
+		if (attr == INVALID_FILE_ATTRIBUTES) return;
+
+		// Read contents for frames=N
+		int frames = 2;
+		HANDLE hf = CreateFileA(trigger_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+			nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (hf != INVALID_HANDLE_VALUE)
+		{
+			char buf[256] = {};
+			DWORD bytes_read = 0;
+			ReadFile(hf, buf, sizeof(buf) - 1, &bytes_read, nullptr);
+			CloseHandle(hf);
+
+			// Parse "frames=N"
+			if (const char* p = strstr(buf, "frames="))
+				frames = atoi(p + 7);
+			if (frames < 1) frames = 2;
+		}
+
+		DeleteFileA(trigger_path.c_str());
+
+		shared::common::log("Tracer",
+			std::format("External trigger: {} frames", frames));
+		start_capture(frames, generate_default_filename());
+	}
+
 	void tracer::on_present()
 	{
+		// Check for external trigger file
+		if (!capturing_ && !waiting_)
+			check_trigger_file();
+
+		// Check delayed start countdown
+		if (waiting_)
+		{
+			DWORD elapsed = GetTickCount() - delay_start_tick_;
+			if (elapsed >= delay_ms_)
+			{
+				waiting_ = false;
+				start_capture(pending_frames_, pending_filename_);
+			}
+			return;
+		}
+
 		if (!capturing_) return;
 
 		flush_buffer();
@@ -205,6 +341,13 @@ namespace comp
 
 	void tracer::record_begin(const char* method, int slot)
 	{
+		if (!(classify_method(method) & category_mask_))
+		{
+			skipping_ = true;
+			return;
+		}
+		skipping_ = false;
+
 		buf_printf("{\"frame\":%d,\"seq\":%d,\"slot\":%d,\"method\":\"%s\",\"args\":{",
 			frame_index_, sequence_, slot, method);
 		first_arg_ = true;
@@ -214,6 +357,7 @@ namespace comp
 
 	void tracer::record_arg_uint(const char* name, DWORD val)
 	{
+		if (skipping_) return;
 		if (!first_arg_) buf_append(",", 1);
 		buf_printf("\"%s\":%u", name, val);
 		first_arg_ = false;
@@ -221,6 +365,7 @@ namespace comp
 
 	void tracer::record_arg_int(const char* name, INT val)
 	{
+		if (skipping_) return;
 		if (!first_arg_) buf_append(",", 1);
 		buf_printf("\"%s\":%d", name, val);
 		first_arg_ = false;
@@ -228,6 +373,7 @@ namespace comp
 
 	void tracer::record_arg_float(const char* name, float val)
 	{
+		if (skipping_) return;
 		if (!first_arg_) buf_append(",", 1);
 		buf_printf("\"%s\":", name);
 		buf_write_float(val);
@@ -236,6 +382,7 @@ namespace comp
 
 	void tracer::record_arg_ptr(const char* name, const void* val)
 	{
+		if (skipping_) return;
 		if (!first_arg_) buf_append(",", 1);
 		buf_printf("\"%s\":\"0x%08X\"", name, reinterpret_cast<DWORD>(val));
 		first_arg_ = false;
@@ -243,7 +390,7 @@ namespace comp
 
 	void tracer::record_data_float(const char* name, const float* data, UINT count)
 	{
-		if (!data || count == 0) return;
+		if (skipping_ || !data || count == 0) return;
 
 		// Open data section (close args first)
 		if (args_open_)
@@ -277,7 +424,7 @@ namespace comp
 
 	void tracer::record_data_int(const char* name, const int* data, UINT count)
 	{
-		if (!data || count == 0) return;
+		if (skipping_ || !data || count == 0) return;
 
 		if (args_open_)
 		{
@@ -307,7 +454,7 @@ namespace comp
 
 	void tracer::record_data_shader(const char* name, const DWORD* bytecode)
 	{
-		if (!bytecode) return;
+		if (skipping_ || !bytecode) return;
 
 		if (args_open_)
 		{
@@ -339,7 +486,7 @@ namespace comp
 
 	void tracer::record_data_vtxdecl(const char* name, const BYTE* elements)
 	{
-		if (!elements) return;
+		if (skipping_ || !elements) return;
 
 		if (args_open_)
 		{
@@ -375,6 +522,7 @@ namespace comp
 
 	void tracer::record_clear_data(DWORD flags, DWORD color, float z, DWORD stencil)
 	{
+		if (skipping_) return;
 		if (args_open_)
 		{
 			buf_append("},\"data\":{", 10);
@@ -389,7 +537,7 @@ namespace comp
 
 	void tracer::record_backtrace()
 	{
-		if (backtrace_depth_ <= 0) return;
+		if (skipping_ || backtrace_depth_ <= 0) return;
 
 		close_sections();
 
@@ -413,7 +561,7 @@ namespace comp
 
 	void tracer::record_created_handle(const void* handle)
 	{
-		if (!handle) return;
+		if (skipping_ || !handle) return;
 		// Append created_handle field before record_end closes the line
 		close_sections();
 		buf_printf(",\"created_handle\":\"0x%08X\"", reinterpret_cast<DWORD>(handle));
@@ -421,6 +569,12 @@ namespace comp
 
 	void tracer::record_end()
 	{
+		if (skipping_)
+		{
+			skipping_ = false;
+			return;
+		}
+
 		close_sections();
 		buf_printf(",\"ts\":%u}\n", static_cast<DWORD>(GetTickCount()));
 		sequence_++;

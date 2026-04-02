@@ -16,9 +16,9 @@ Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix comp
 
 ---
 
-## What remix-comp Does
+## What remix-comp-proxy Does
 
-Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from `rtx_remix_tools/dx/remix-comp/`). It is a C++20 compatibility mod that:
+Each game folder under `patches/<GameName>/` is a self-contained remix-comp-proxy project (copied from `rtx_remix_tools/dx/remix-comp-proxy/`). It is a C++20 compatibility mod that:
 
 1. Captures VS constants (View, Projection, World matrices) from `SetVertexShaderConstantF`
 2. Parses `SetVertexDeclaration` to detect BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets
@@ -44,10 +44,10 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/shared/common/ffp_state.cpp` | FFP state tracker -- engage/disengage, matrix transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `remix-comp-proxy.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
 | `build.bat` | Build script: outputs d3d9.dll proxy |
 
-Per-game setup: copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/`, then edit `src/comp/` directly.
+Per-game setup: copy the entire `rtx_remix_tools/dx/remix-comp-proxy/` folder to `patches/<GameName>/`, then edit `src/comp/` directly.
 
 ---
 
@@ -130,7 +130,7 @@ cd patches/<GameName>
 build.bat release --name <GameName>
 ```
 
-Deploy to game directory: `d3d9.dll` + `remix-comp.ini`. Place `d3d9_remix.dll` there if using Remix.
+Deploy to game directory: `d3d9.dll` + `remix-comp-proxy.ini`. Place `d3d9_remix.dll` there if using Remix.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -173,8 +173,8 @@ Other game-specific INI settings:
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
 | `ffp_state.hpp` register layout defaults | **YES** |
-| `remix-comp.ini` `[FFP] AlbedoStage` | **YES** |
-| `remix-comp.ini` `[Skinning] Enabled` | **YES** (after rigid works) |
+| `remix-comp-proxy.ini` `[FFP] AlbedoStage` | **YES** |
+| `remix-comp-proxy.ini` `[Skinning] Enabled` | **YES** (after rigid works) |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |
 | `renderer.cpp` `on_draw_primitive()` | **YES** -- draw routing |
 | `ffp_state.cpp` `setup_lighting()`, `setup_texture_stages()`, `apply_transforms()` | MAYBE |
@@ -276,11 +276,11 @@ python -m retools.search <game.exe> strings -f "vertex,decl,shader" --xrefs
 ## Common Pitfalls
 
 - **Matrices look wrong**: D3D9 FFP `SetTransform` expects row-major. The proxy transposes. If the game stores matrices row-major in VS constants (uncommon), remove the transpose in `ffp_state::apply_transforms()`.
-- **Everything is white/black**: Albedo texture is on stage 1+, not stage 0. Set `AlbedoStage` in `remix-comp.ini` `[FFP]` section, or trace `SetTexture` calls to find the correct stage.
+- **Everything is white/black**: Albedo texture is on stage 1+, not stage 0. Set `AlbedoStage` in `remix-comp-proxy.ini` `[FFP]` section, or trace `SetTexture` calls to find the correct stage.
 - **Some objects render, others don't**: Check whether missing geometry has NORMAL in its vertex decl. Check `view_proj_valid()` is true at draw time. `on_draw_primitive()` routes on decl presence + no POSITIONT + not skinned.
-- **Skinned meshes invisible**: Enable `[Skinning] Enabled=1` in `remix-comp.ini`. Verify bone count is non-zero in diagnostic log entries.
+- **Skinned meshes invisible**: Enable `[Skinning] Enabled=1` in `remix-comp-proxy.ini`. Verify bone count is non-zero in diagnostic log entries.
 - **Bones mixed up between NPCs**: Stale WORLDMATRIX slots from a previous object. If still broken, the game may need a game-specific reset hook.
-- **Game crashes on startup**: Set `Enabled=0` in `remix-comp.ini` `[Remix]` to test without Remix.
+- **Game crashes on startup**: Set `Enabled=0` in `remix-comp-proxy.ini` `[Remix]` to test without Remix.
 - **Geometry at origin / piled up**: World matrix register mapping wrong. Re-examine VS constant writes via `livetools trace`.
 - **World geometry shifts after skinned draws**: `WORLDMATRIX(0)` clobbered by bone[0]. The proxy re-applies via world dirty tracking. If still broken, check for bone register overlap with world matrix range.
 

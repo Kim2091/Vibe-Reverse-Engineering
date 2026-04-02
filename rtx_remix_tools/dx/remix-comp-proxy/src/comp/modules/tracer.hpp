@@ -2,6 +2,23 @@
 
 namespace comp
 {
+	enum trace_category : uint32_t
+	{
+		TRACE_DRAW       = 1 << 0,  // DrawPrimitive, DrawIndexedPrimitive, DrawPrimitiveUP, DrawIndexedPrimitiveUP
+		TRACE_STATE      = 1 << 1,  // SetRenderState, SetTextureStageState, SetSamplerState, StateBlock
+		TRACE_SHADERS    = 1 << 2,  // Set/Create VertexShader, PixelShader, ShaderConstant*
+		TRACE_TEXTURES   = 1 << 3,  // SetTexture, CreateTexture, CreateCubeTexture, CreateVolumeTexture
+		TRACE_TRANSFORMS = 1 << 4,  // SetTransform, SetViewport, SetMaterial, SetLight, LightEnable
+		TRACE_VERTEX     = 1 << 5,  // SetStreamSource, SetIndices, SetFVF, SetVertexDeclaration, CreateVertex/IndexBuffer
+		TRACE_RESOURCES  = 1 << 6,  // CreateRenderTarget, CreateDepthStencil, SetRenderTarget, surface ops
+		TRACE_SCENE      = 1 << 7,  // BeginScene, EndScene, Present, Clear, Reset
+		TRACE_GETTERS    = 1 << 8,  // All Get* calls
+		TRACE_MISC       = 1 << 9,  // Everything else (IUnknown, cursor, gamma, etc.)
+
+		TRACE_ALL        = 0xFFFFFFFF,
+		TRACE_DEFAULT    = TRACE_ALL & ~TRACE_GETTERS & ~TRACE_MISC,
+	};
+
 	class tracer final : public shared::common::loader::component_module
 	{
 	public:
@@ -14,6 +31,12 @@ namespace comp
 		// Hot-path check: single bool test, predicted not-taken
 		static bool is_active() { return p_this && p_this->capturing_; }
 		static tracer& ref() { return *p_this; }
+
+		// Delayed capture: starts after countdown expires
+		void start_capture_delayed(int num_frames, const std::string& filename, float delay_seconds);
+		void cancel_delayed();
+		bool is_waiting() const { return waiting_; }
+		float delay_remaining() const;
 
 		// Capture control
 		void start_capture(int num_frames, const std::string& filename);
@@ -40,6 +63,11 @@ namespace comp
 
 		// Post-call: capture created handles for Create* methods
 		void record_created_handle(const void* handle);
+
+		// Category filter
+		uint32_t category_mask() const { return category_mask_; }
+		void set_category_mask(uint32_t mask) { category_mask_ = mask; }
+		static uint32_t classify_method(const char* method);
 
 		// ImGui state accessors
 		int frames_to_capture() const { return frames_to_capture_; }
@@ -79,6 +107,10 @@ namespace comp
 		// Config
 		int backtrace_depth_ = 8;
 		std::string output_dir_ = "captures";
+		uint32_t category_mask_ = TRACE_DEFAULT;
+
+		// Per-record skip flag (set by record_begin when method is filtered out)
+		bool skipping_ = false;
 
 		// Last capture info
 		std::string last_capture_path_;
@@ -87,6 +119,16 @@ namespace comp
 
 		// FFP state saved before capture (to restore after)
 		bool ffp_was_enabled_ = false;
+
+		// Delayed start state
+		bool waiting_ = false;
+		DWORD delay_start_tick_ = 0;
+		DWORD delay_ms_ = 0;
+		int pending_frames_ = 0;
+		std::string pending_filename_;
+
+		// Trigger file watching
+		void check_trigger_file();
 
 		// Helpers
 		void flush_buffer();

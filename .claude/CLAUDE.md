@@ -4,12 +4,12 @@
 
 These directories are **templates** shared across all game projects. **NEVER modify them** unless the user explicitly asks to change the template itself:
 
-- `rtx_remix_tools/` — remix-comp framework (d3d9.dll proxy), DX analysis scripts
+- `rtx_remix_tools/` — remix-comp-proxy framework (d3d9.dll proxy), DX analysis scripts
 - `retools/` — static analysis toolkit (decompiler, search, sigdb, etc.)
 - `livetools/` — Frida-based dynamic analysis
 - `graphics/` — DX9 tracer framework
 
-**Per-game work goes in `patches/<GameName>/`.** When starting a new game, copy `rtx_remix_tools/dx/remix-comp/` (excluding `build/`) to `patches/<GameName>/` and edit the copy. If the user says "edit remix-comp code" without specifying, ask whether they mean the template or a game copy.
+**Per-game work goes in `patches/<GameName>/`.** When starting a new game, copy `rtx_remix_tools/dx/remix-comp-proxy/` (excluding `build/`) to `patches/<GameName>/` and edit the copy. If the user says "edit remix-comp-proxy code" without specifying, ask whether they mean the template or a game copy.
 
 ---
 
@@ -87,10 +87,10 @@ Each file reads as if it was always designed this way. Comments guide the next d
 ## DX9 FFP Porting
 
 When working on any of the following — invoke the **`dx9-ffp-port` skill** immediately before starting:
-- Editing `renderer.cpp`, `ffp_state.cpp`, `remix-comp.ini`, or draw routing logic
+- Editing `renderer.cpp`, `ffp_state.cpp`, `remix-comp-proxy.ini`, or draw routing logic
 - Porting a game for RTX Remix / fixed-function pipeline
 - Diagnosing VS constant registers, vertex declarations, matrix mapping, skinning
-- Building, deploying, or iterating on a remix-comp patch (`build.bat`, `diagnostics.log`, ImGui F4)
+- Building, deploying, or iterating on a remix-comp-proxy patch (`build.bat`, `diagnostics.log`, ImGui F4)
 
 ---
 

@@ -81,13 +81,13 @@ namespace comp
 
 		ImGui::Spacing(0.0f, 20.0f);
 
-		ImGui::CenterText("RTX REMIX COMPATIBILITY BASE");
-		ImGui::CenterText("                      by #xoxor4d");
+		ImGui::CenterText("remix-comp-proxy");
+		ImGui::CenterText("DX9 proxy framework for RTX Remix compatibility mods");
 
 		ImGui::Spacing(0.0f, 24.0f);
 		ImGui::CenterText("current version");
 
-		const char* version_str = shared::utils::va("%d.%d.%d :: %s", 
+		const char* version_str = shared::utils::va("%d.%d.%d :: %s",
 			COMP_MOD_VERSION_MAJOR, COMP_MOD_VERSION_MINOR, COMP_MOD_VERSION_PATCH, __DATE__);
 		ImGui::CenterText(version_str);
 
@@ -98,27 +98,54 @@ namespace comp
 #endif
 
 		SPACEY16;
-		CENTER_URL("GitHub Repository", "https://github.com/xoxor4d/remix-comp-base");
+		CENTER_URL("Vibe Reverse Engineering Toolkit", "https://github.com/Ekozmaster/Vibe-Reverse-Engineering");
 
 		SPACEY16;
 		ImGui::Separator();
 		SPACEY16;
 
-		const char* credits_title_str = "Credits / Thanks to:";
-		ImGui::CenterText(credits_title_str);
+		ImGui::CenterText("Contributors");
 
-		ImGui::Spacing(0.0f, 8.0f);
+		SPACEY8;
+
+		// xoxor4d
+		CENTER_URL("xoxor4d", "https://github.com/xoxor4d");
+		ImGui::CenterText("Original remix-comp-base framework, D3D9 proxy architecture,");
+		ImGui::CenterText("ImGui integration, module system");
+		SPACEY8;
+		CENTER_URL("Ko-Fi (xoxor4d)", "https://ko-fi.com/xoxor4d");
+		ImGui::SameLine();
+		ImGui::TextURL("Patreon", "https://patreon.com/xoxor4d", true);
+
+		SPACEY16;
+
+		// kim2091
+		CENTER_URL("kim2091", "https://github.com/kim2091");
+		ImGui::CenterText("FFP conversion, skinning module, diagnostic logging,");
+		ImGui::CenterText("tracer integration, INI config, toolkit integration");
+		SPACEY8;
+		CENTER_URL("Ko-Fi (kim2091)", "https://ko-fi.com/kim20913944");
+
+		SPACEY16;
+
+		// momo5502
+		CENTER_URL("momo5502", "https://github.com/momo5502");
+		ImGui::CenterText("Initial codebase that remix-comp-base was built on");
+
+		SPACEY16;
+		ImGui::Separator();
+		SPACEY16;
+
+		ImGui::CenterText("Dependencies");
+
+		SPACEY8;
 
 		CENTER_URL("NVIDIA - RTX Remix", "https://github.com/NVIDIAGameWorks/rtx-remix");
-		CENTER_URL("Dear Imgui", "https://github.com/ocornut/imgui");
-		CENTER_URL("Minhook", "https://github.com/TsudaKageyu/minhook");
-		CENTER_URL("Ultimate-ASI-Loader", "https://github.com/ThirteenAG/Ultimate-ASI-Loader");
+		CENTER_URL("Dear ImGui", "https://github.com/ocornut/imgui");
+		CENTER_URL("MinHook", "https://github.com/TsudaKageyu/minhook");
 
-		ImGui::Spacing(0.0f, 24.0f);
-		ImGui::CenterText("And of course, all my fellow Ko-Fi and Patreon supporters");
-		ImGui::CenterText("and all the people that helped along the way.");
-		ImGui::Spacing(0.0f, 4.0f);
-		ImGui::CenterText("Thank you!");
+		SPACEY16;
+		ImGui::CenterText("Thank you to all supporters and contributors!");
 	}
 
 	// draw imgui widget
@@ -357,6 +384,13 @@ namespace comp
 				t->frames_captured(), t->frames_to_capture(), t->sequence());
 			ImGui::ProgressBar(static_cast<float>(t->frames_captured()) / t->frames_to_capture());
 		}
+		else if (t->is_waiting())
+		{
+			float remaining = t->delay_remaining();
+			ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "WAITING");
+			ImGui::SameLine();
+			ImGui::Text("Capture starts in %.1fs", remaining);
+		}
 		else
 		{
 			ImGui::Text("Status: IDLE");
@@ -372,6 +406,46 @@ namespace comp
 
 		static int bt_depth = 8;
 		ImGui::SliderInt("Backtrace depth", &bt_depth, 0, 16);
+
+		static float delay_seconds = 0.0f;
+		ImGui::SliderFloat("Delay (seconds)", &delay_seconds, 0.0f, 30.0f, "%.1f");
+
+		SPACEY8;
+
+		// Category filters
+		if (ImGui::TreeNode("Capture Filters"))
+		{
+			uint32_t mask = t->category_mask();
+			auto flag = [&](const char* label, trace_category cat)
+			{
+				bool on = (mask & cat) != 0;
+				if (ImGui::Checkbox(label, &on))
+					mask = on ? (mask | cat) : (mask & ~cat);
+			};
+
+			flag("Draw calls",  TRACE_DRAW);
+			flag("State",       TRACE_STATE);
+			flag("Shaders",     TRACE_SHADERS);
+			flag("Textures",    TRACE_TEXTURES);
+			flag("Transforms",  TRACE_TRANSFORMS);
+			flag("Vertex setup", TRACE_VERTEX);
+			flag("Resources",   TRACE_RESOURCES);
+			flag("Scene flow",  TRACE_SCENE);
+			flag("Get* calls",  TRACE_GETTERS);
+			flag("Misc",        TRACE_MISC);
+
+			if (mask != t->category_mask())
+				t->set_category_mask(mask);
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton("All"))
+				t->set_category_mask(TRACE_ALL);
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Default"))
+				t->set_category_mask(TRACE_DEFAULT);
+
+			ImGui::TreePop();
+		}
 
 		SPACEY8;
 
@@ -391,14 +465,14 @@ namespace comp
 
 		SPACEY8;
 
-		ImGui::BeginDisabled(t->is_capturing());
+		ImGui::BeginDisabled(t->is_capturing() || t->is_waiting());
 		if (ImGui::Button("Start Capture", ImVec2(200, 0)))
 		{
 			t->set_backtrace_depth(bt_depth);
 			std::string fname = filename_buf;
 			if (fname.empty())
 				fname = tracer::generate_default_filename();
-			t->start_capture(frames, fname);
+			t->start_capture_delayed(frames, fname, delay_seconds);
 			filename_buf[0] = '\0';
 			filename_initialized = false;
 		}
@@ -406,9 +480,14 @@ namespace comp
 
 		ImGui::SameLine();
 
-		ImGui::BeginDisabled(!t->is_capturing());
-		if (ImGui::Button("Stop Capture", ImVec2(200, 0)))
-			t->stop_capture();
+		ImGui::BeginDisabled(!t->is_capturing() && !t->is_waiting());
+		if (ImGui::Button(t->is_waiting() ? "Cancel" : "Stop Capture", ImVec2(200, 0)))
+		{
+			if (t->is_waiting())
+				t->cancel_delayed();
+			else
+				t->stop_capture();
+		}
 		ImGui::EndDisabled();
 
 		// Last capture info
@@ -431,7 +510,7 @@ namespace comp
 		if (!d)
 		{
 			ImGui::TextColored(ImVec4(1, 0, 0, 1), "Diagnostics module not loaded");
-			ImGui::TextWrapped("Set [Diagnostics] Enabled=1 in remix-comp.ini to enable.");
+			ImGui::TextWrapped("Set [Diagnostics] Enabled=1 in remix-comp-proxy.ini to enable.");
 			return;
 		}
 

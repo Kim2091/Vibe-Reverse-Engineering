@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: remix-comp build script (d3d9.dll proxy)
+:: remix-comp-proxy build script (d3d9.dll proxy)
 :: Usage: build.bat [release|debug] [--name OutputName] [--comp CompDir]
 ::
 :: Examples:
@@ -13,7 +13,7 @@ setlocal enabledelayedexpansion
 
 set "ROOT=%~dp0"
 set "CONFIG=release"
-set "NAME=remix-comp"
+set "NAME=remix-comp-proxy"
 set "COMP_DIR=%ROOT%src\comp"
 set "CUSTOM_COMP=0"
 
@@ -22,7 +22,7 @@ set "CUSTOM_COMP=0"
 if "%~1"=="" goto :args_done
 if /i "%~1"=="release" ( set "CONFIG=release" & shift & goto :parse_args )
 if /i "%~1"=="debug"   ( set "CONFIG=debug"   & shift & goto :parse_args )
-if /i "%~1"=="--name"  ( set "NAME=%~2-comp"  & shift & shift & goto :parse_args )
+if /i "%~1"=="--name"  ( set "NAME=%~2-comp-proxy"  & shift & shift & goto :parse_args )
 if /i "%~1"=="--comp"  ( set "COMP_DIR=%~2" & set "CUSTOM_COMP=1" & shift & shift & goto :parse_args )
 echo Unknown argument: %~1
 exit /b 1
@@ -93,7 +93,7 @@ if /i "%CONFIG%"=="release" (
 )
 
 echo.
-echo === remix-comp build (d3d9.dll proxy) ===
+echo === remix-comp-proxy build (d3d9.dll proxy) ===
 echo Config:  %CONFIG%
 echo Output:  %GAME_OUT%\d3d9.dll
 echo CompDir: %COMP_DIR%
@@ -208,14 +208,14 @@ if errorlevel 1 goto :fail
 
 :: Copy INI to build output (game-specific copy takes priority over template)
 if "!CUSTOM_COMP!"=="1" (
-    if exist "!GAME_DIR!\remix-comp.ini" (
-        copy /y "!GAME_DIR!\remix-comp.ini" "%GAME_OUT%\remix-comp.ini" >nul
-    ) else if exist "%ROOT%assets\remix-comp.ini" (
-        copy /y "%ROOT%assets\remix-comp.ini" "%GAME_OUT%\remix-comp.ini" >nul
+    if exist "!GAME_DIR!\remix-comp-proxy.ini" (
+        copy /y "!GAME_DIR!\remix-comp-proxy.ini" "%GAME_OUT%\remix-comp-proxy.ini" >nul
+    ) else if exist "%ROOT%assets\remix-comp-proxy.ini" (
+        copy /y "%ROOT%assets\remix-comp-proxy.ini" "%GAME_OUT%\remix-comp-proxy.ini" >nul
     )
 ) else (
-    if exist "%ROOT%assets\remix-comp.ini" (
-        copy /y "%ROOT%assets\remix-comp.ini" "%GAME_OUT%\remix-comp.ini" >nul
+    if exist "%ROOT%assets\remix-comp-proxy.ini" (
+        copy /y "%ROOT%assets\remix-comp-proxy.ini" "%GAME_OUT%\remix-comp-proxy.ini" >nul
     )
 )
 

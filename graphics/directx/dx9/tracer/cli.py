@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     cg = sub.add_parser("codegen", help="Generate d3d9_trace_hooks.inc")
     cg.add_argument("--output", "-o", default=None, help="Output path (default: stdout)")
     cg.add_argument("--format", "-f", choices=["c", "cpp"], default="c",
-                    help="Output format: c (standalone proxy) or cpp (remix-comp module)")
+                    help="Output format: c (standalone proxy) or cpp (remix-comp-proxy module)")
     cg.set_defaults(func=cmd_codegen)
 
     # trigger

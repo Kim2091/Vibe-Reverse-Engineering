@@ -10,7 +10,7 @@ hold transformation matrices:
 5. Embedded shader CTAB parsing (extracts named constants like "WorldViewProj")
 6. SetTransform cross-reference (FFP transform usage reveals matrix roles)
 
-Outputs a suggested remix-comp.ini register layout.
+Outputs a suggested remix-comp-proxy.ini register layout.
 
 Usage:
     python find_matrix_registers.py <game.exe>
@@ -420,7 +420,7 @@ def main():
     # Phase 5: Suggested layout
     # ================================================================
     print(f"\n\n{'='*60}")
-    print(f"=== Suggested remix-comp.ini Register Layout ===")
+    print(f"=== Suggested remix-comp-proxy.ini Register Layout ===")
     print(f"{'='*60}")
 
     # Priority: CTAB names > frequency heuristics > position heuristics

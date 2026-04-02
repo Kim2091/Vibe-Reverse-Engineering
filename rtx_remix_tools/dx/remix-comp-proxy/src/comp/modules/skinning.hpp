@@ -5,7 +5,7 @@ namespace comp
 	/*
 	 * Optional skinning module for FFP conversion.
 	 *
-	 * When enabled via [Skinning] Enabled=1 in remix-comp.ini, this module
+	 * When enabled via [Skinning] Enabled=1 in remix-comp-proxy.ini, this module
 	 * handles skinned mesh rendering by expanding compressed vertex data,
 	 * uploading bone matrices via SetTransform(WORLDMATRIX(i)), and drawing
 	 * with D3D FFP indexed vertex blending.

@@ -234,13 +234,13 @@ def main():
     hybrid_pct = 100.0 * category_counts.get("hybrid", 0) / len(all_draws) if all_draws else 0
 
     if ffp_pct > 50:
-        print(f"  Primarily FFP ({ffp_pct:.0f}%) -- good candidate for remix-comp proxy.")
+        print(f"  Primarily FFP ({ffp_pct:.0f}%) -- good candidate for remix-comp-proxy.")
     elif shader_pct > 50:
         print(f"  Primarily shader-based ({shader_pct:.0f}%) -- may need shader replacement")
         print(f"  rather than FFP interception for Remix.")
     elif hybrid_pct > 30:
         print(f"  Significant hybrid usage ({hybrid_pct:.0f}%) -- game mixes FFP and shaders.")
-        print(f"  remix-comp needs to handle both paths.")
+        print(f"  remix-comp-proxy needs to handle both paths.")
 
     up_draws = method_counts.get("DrawPrimitiveUP", 0) + method_counts.get("DrawIndexedPrimitiveUP", 0)
     if up_draws > 0:

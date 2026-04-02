@@ -1,8 +1,8 @@
-# remix-comp: Context Guide
+# remix-comp-proxy: Context Guide
 
-**`rtx_remix_tools/dx/remix-comp/` is the READ-ONLY TEMPLATE.** Never modify it unless explicitly asked. Per-game work goes in `patches/<GameName>/`.
+**`rtx_remix_tools/dx/remix-comp-proxy/` is the READ-ONLY TEMPLATE.** Never modify it unless explicitly asked. Per-game work goes in `patches/<GameName>/`.
 
-Each game folder under `patches/<Game>/` is a self-contained remix-comp project. All paths below are relative to the game folder root (e.g. `patches/FNV/`) or to the framework template at `rtx_remix_tools/dx/remix-comp/`.
+Each game folder under `patches/<Game>/` is a self-contained remix-comp-proxy project. All paths below are relative to the game folder root (e.g. `patches/FNV/`) or to the framework template at `rtx_remix_tools/dx/remix-comp-proxy/`.
 
 ## Do Not Read
 

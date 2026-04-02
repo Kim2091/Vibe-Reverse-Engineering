@@ -1,6 +1,6 @@
 ---
 name: dx9-ffp-port
-description: DX9 FFP Proxy -- Game Porting. TRIGGER when: user mentions porting a game for RTX Remix, working on renderer.cpp / ffp_state / remix-comp.ini / draw routing / VS constants / vertex declarations / matrix mapping / skinning, building or deploying a remix-comp patch, or diagnosing rendering issues in a patched game (white geometry, missing objects, wrong transforms, ImGui F4, diagnostics.log). Covers full workflow: static analysis, VS constant discovery, draw routing, INI config, build/deploy, pitfall diagnosis.
+description: DX9 FFP Proxy -- Game Porting. TRIGGER when: user mentions porting a game for RTX Remix, working on renderer.cpp / ffp_state / remix-comp-proxy.ini / draw routing / VS constants / vertex declarations / matrix mapping / skinning, building or deploying a remix-comp-proxy patch, or diagnosing rendering issues in a patched game (white geometry, missing objects, wrong transforms, ImGui F4, diagnostics.log). Covers full workflow: static analysis, VS constant discovery, draw routing, INI config, build/deploy, pitfall diagnosis.
 ---
 
 # DX9 FFP Proxy -- Game Porting
@@ -8,11 +8,11 @@ description: DX9 FFP Proxy -- Game Porting. TRIGGER when: user mentions porting 
 Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix compatibility. Remix requires FFP geometry to inject path-traced lighting and replaceable assets.
 
 **NEVER MODIFY TEMPLATE CODE.** The following directories are read-only templates:
-- `rtx_remix_tools/dx/remix-comp/` — remix-comp framework template
+- `rtx_remix_tools/dx/remix-comp-proxy/` — remix-comp-proxy framework template
 
-To create a game patch, **copy** the template to `patches/<GameName>/` and edit the copy. If the user asks you to edit remix-comp code, always confirm whether they mean the template or a game-specific copy under `patches/`. Only modify the template if the user **explicitly** says to change the template itself.
+To create a game patch, **copy** the template to `patches/<GameName>/` and edit the copy. If the user asks you to edit remix-comp-proxy code, always confirm whether they mean the template or a game-specific copy under `patches/`. Only modify the template if the user **explicitly** says to change the template itself.
 
-**SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning in `remix-comp.ini`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
+**SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning in `remix-comp-proxy.ini`, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks for character model / bone / skeletal animation support. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp` for the full implementation.
 
 **SKINNING APPROACH: FFP indexed vertex blending, NOT CPU matrix math.** When skinning is enabled, the correct approach is:
 1. Keep BLENDINDICES and BLENDWEIGHT elements in the vertex declaration and vertex buffer
@@ -25,9 +25,9 @@ CPU-side vertex skinning (manually multiplying vertices by bone matrices) is a *
 
 ---
 
-## What remix-comp Does
+## What remix-comp-proxy Does
 
-Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from `rtx_remix_tools/dx/remix-comp/`). It is a d3d9.dll proxy that:
+Each game folder under `patches/<GameName>/` is a self-contained remix-comp-proxy project (copied from `rtx_remix_tools/dx/remix-comp-proxy/`). It is a d3d9.dll proxy that:
 
 1. Captures VS constants (View, Projection, World matrices) from `SetVertexShaderConstantF` via `ffp_state::on_set_vs_const_f`
 2. Parses `SetVertexDeclaration` via `ffp_state::on_set_vertex_declaration` to detect BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets
@@ -48,7 +48,7 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/comp/modules/renderer.hpp` | `drawcall_mod_context` for save/restore state around draws |
 | `src/shared/common/ffp_state.cpp` | Core FFP state tracker -- engage/disengage, transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | FFP state class with all accessors |
-| `src/shared/common/config.hpp` | Config structure parsed from `remix-comp.ini` |
+| `src/shared/common/config.hpp` | Config structure parsed from `remix-comp-proxy.ini` |
 | `src/comp/main.cpp` | DLL entry, d3d9 proxy init, window finder, config loading |
 | `src/comp/comp.cpp` | Module init: registers renderer, diagnostics, skinning, imgui |
 | `src/comp/d3d9_proxy.cpp` | Loads real d3d9 chain, DLL pre/post-load, forwarded exports |
@@ -60,12 +60,12 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/comp/modules/imgui.cpp` | ImGui debug overlay (F4) with FFP tab |
 | `src/comp/game/game.cpp` | Per-game address init (patterns, hooks) |
 | `src/comp/game/game.hpp` | Per-game variables and function typedefs |
-| `remix-comp.ini` | Runtime config: albedo stage, skinning toggle, diagnostics, DLL chain |
+| `remix-comp-proxy.ini` | Runtime config: albedo stage, skinning toggle, diagnostics, DLL chain |
 | `build.bat` | Build script: outputs d3d9.dll proxy. `build.bat [release\|debug] [--name Name]` |
 
-**`rtx_remix_tools/dx/remix-comp/` is the TEMPLATE.** Each game gets a full copy under `patches/<GameName>/` — the entire folder is self-contained and can be distributed as a standalone repo. Edit `src/comp/` directly in the game's copy.
+**`rtx_remix_tools/dx/remix-comp-proxy/` is the TEMPLATE.** Each game gets a full copy under `patches/<GameName>/` — the entire folder is self-contained and can be distributed as a standalone repo. Edit `src/comp/` directly in the game's copy.
 
-**Before reading remix-comp source files**, read [references/remix-comp-context.md](references/remix-comp-context.md) for a skip-list of boilerplate files (~7,000 lines) you should never open, with summaries of what they do. It also lists the ~1,200 lines of files that actually matter for per-game work.
+**Before reading remix-comp-proxy source files**, read [references/remix-comp-context.md](references/remix-comp-context.md) for a skip-list of boilerplate files (~7,000 lines) you should never open, with summaries of what they do. It also lists the ~1,200 lines of files that actually matter for per-game work.
 
 ---
 
@@ -144,9 +144,9 @@ python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map
 
 ### Step 3: Set Up Per-Game Project
 
-**IMPORTANT:** `rtx_remix_tools/dx/remix-comp/` is the **template**. NEVER edit it directly. Each game gets a full copy of the framework.
+**IMPORTANT:** `rtx_remix_tools/dx/remix-comp-proxy/` is the **template**. NEVER edit it directly. Each game gets a full copy of the framework.
 
-1. Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`)
+1. Copy the entire `rtx_remix_tools/dx/remix-comp-proxy/` folder to `patches/<GameName>/` (excluding `build/`)
 2. Edit `src/comp/` directly in the game's copy — this is the per-game customization layer
 3. Edit register layout defaults in `src/shared/common/ffp_state.hpp` (see Register Layout section below)
 4. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
@@ -166,7 +166,7 @@ build.bat release --name <GameName>
 
 The build produces `d3d9.dll` in `patches/<GameName>/build/bin/release/`. Deploy:
 - `d3d9.dll` to the game directory (the game loads this as its d3d9 proxy)
-- `remix-comp.ini` to the game directory
+- `remix-comp-proxy.ini` to the game directory
 - `d3d9_remix.dll` to the game directory if using Remix
 
 ### Step 5: Diagnose with Log and ImGui
@@ -206,7 +206,7 @@ int vs_bone_min_regs_ = 3;
 
 Each matrix occupies 4 consecutive vec4 registers (= 16 floats). After changing defaults, rebuild with `build.bat`.
 
-## INI Config (`remix-comp.ini`)
+## INI Config (`remix-comp-proxy.ini`)
 
 Runtime settings that don't require recompile:
 
@@ -240,12 +240,12 @@ PostLoad=
 
 ## Architecture: What to Edit vs What to Leave Alone
 
-Each game folder under `patches/<GameName>/` is a **self-contained** copy of the full remix-comp framework. Edit files directly in the game's copy.
+Each game folder under `patches/<GameName>/` is a **self-contained** copy of the full remix-comp-proxy framework. Edit files directly in the game's copy.
 
 | Component (in `patches/<GameName>/`) | Edit Per-Game? |
 |-----------|----------------|
 | `ffp_state.hpp` register layout defaults | **YES** — rebuild after changing |
-| `remix-comp.ini` albedo stage, diagnostics, chain | **YES** |
+| `remix-comp-proxy.ini` albedo stage, diagnostics, chain | **YES** |
 | `src/comp/main.cpp` WINDOW_CLASS_NAME | **YES** |
 | `src/comp/modules/renderer.cpp` draw routing | **YES** -- main draw routing |
 | `src/comp/game/game.cpp` address init and hooks | **YES** -- per-game hooks |
@@ -293,10 +293,10 @@ AND !ffp.cur_decl_has_pos_t() AND !ffp.cur_decl_is_skinned()?
 
 - **Concatenated WVP/VP instead of separate matrices**: This is the **#1 Remix porting mistake**. Remix requires separate World, View, and Projection matrices passed via `SetTransform`. If the game uploads a pre-multiplied WorldViewProj or ViewProj to a single register range, the proxy gets a combined matrix it can't decompose. **Fix**: find where the game multiplies W*V*P (or V*P) and hook that function to capture the individual matrices *before* concatenation. Use `find_matrix_registers.py` to detect this -- if CTAB shows "WorldViewProj" or only one matrix register is uploaded per draw, you have this problem.
 - **Matrices look wrong**: D3D9 FFP `SetTransform` expects row-major. `ffp_state::apply_transforms` transposes column-major VS constants. If the game stores matrices row-major in VS constants (uncommon), remove the transpose in `ffp_state::apply_transforms`.
-- **Everything is white/black**: Albedo texture is on stage 1+, not stage 0. Set `AlbedoStage` in `remix-comp.ini`, or trace `SetTexture` calls to find the correct stage.
+- **Everything is white/black**: Albedo texture is on stage 1+, not stage 0. Set `AlbedoStage` in `remix-comp-proxy.ini`, or trace `SetTexture` calls to find the correct stage.
 - **Some objects render, others don't**: Check whether missing geometry has NORMAL in its vertex decl. Check `ffp.view_proj_valid()` is true at draw time. DrawPrimitive routes on decl presence + no POSITIONT + not skinned.
-- **Skinned meshes invisible**: Set `[Skinning] Enabled=1` in `remix-comp.ini`. Check log for skinning errors. Verify `bone_start_reg` and `num_bones` are non-zero in the log.
-- **Game crashes on startup**: Set `[Remix] Enabled=0` in `remix-comp.ini` to test without Remix. Check `WINDOW_CLASS_NAME` in `comp/main.cpp`.
+- **Skinned meshes invisible**: Set `[Skinning] Enabled=1` in `remix-comp-proxy.ini`. Check log for skinning errors. Verify `bone_start_reg` and `num_bones` are non-zero in the log.
+- **Game crashes on startup**: Set `[Remix] Enabled=0` in `remix-comp-proxy.ini` to test without Remix. Check `WINDOW_CLASS_NAME` in `comp/main.cpp`.
 - **Geometry at origin / piled up**: World matrix register mapping wrong. Re-examine VS constant writes via `livetools trace` or DX9 tracer `--const-provenance`.
 - **World geometry shifts after skinned draws**: `WORLDMATRIX(0)` clobbered by bone[0]. The proxy tracks `world_dirty_` for re-application. If still broken, check for bone register overlap with world matrix range in `ffp_state.hpp`.
 - **ImGui overlay not appearing**: Press F4. Check that `WINDOW_CLASS_NAME` is correct and the window was found (console output). Check for DirectInput hook conflicts.

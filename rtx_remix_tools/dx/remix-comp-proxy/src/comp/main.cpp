@@ -93,7 +93,7 @@ BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 		shared::common::set_console_color_default();
 
 		// Load config from INI file next to the DLL
-		shared::common::config::get().load(shared::globals::root_path + "\\remix-comp.ini");
+		shared::common::config::get().load(shared::globals::root_path + "\\remix-comp-proxy.ini");
 
 		// Pre-load DLLs (before the d3d9 chain is established)
 		d3d9_proxy::load_preload_dlls();
