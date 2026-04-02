@@ -56,7 +56,7 @@ Everything else. Specify WHAT you need, not HOW to run it — the agent has the 
 
 ### DX analysis scripts (fast first-pass)
 
-These are targeted D3D9 scanners under `rtx_remix_tools/dx/scripts/`. They run in seconds and surface D3D-specific patterns that general-purpose retools would take longer to find. **Use these BEFORE retools** when the question is about D3D9 API usage, device calls, shaders, or vertex formats.
+These are targeted D3D9 scanners under `rtx_remix_tools/dx/scripts/`. They run in seconds and surface D3D-specific patterns that general-purpose retools would take longer to find. **Use these BEFORE retools** when the question is about D3D9 API usage, device calls, shaders, or vertex formats. Run as `python rtx_remix_tools/dx/scripts/<script> <args>`.
 
 - "How does the game use D3D9?" → `find_d3d_calls.py <game.exe>` (imports + call sites)
 - "Which VS constant registers hold matrices?" → `find_vs_constants.py <game.exe>` (SetVertexShaderConstantF call sites with register/count)
@@ -114,7 +114,7 @@ These are fast first-pass scanners — they surface candidate addresses. Follow 
 | `sigdb.py scan $B` | Bulk signature scan against DB | `sigdb.py scan game.exe` |
 | `sigdb.py identify $B $VA` | Single function signature lookup (multi-tier) | `sigdb.py identify game.exe 0x401200` |
 | `sigdb.py fingerprint $B` | Identify compiler version (Rich header + markers + imports) | `sigdb.py fingerprint game.exe` |
-| `context.py assemble $B $VA --project $P` | Gather full analysis context for a function | `context.py assemble game.exe 0x401500 --project Warband` |
+| `context.py assemble $B $VA --project $P` | Gather full analysis context for a function. Includes forward constant propagation by default (`--no-dataflow` to skip on large functions) | `context.py assemble game.exe 0x401500 --project Warband` |
 | `context.py postprocess $B $VA --project $P` | Mechanically rename/annotate decompiler output (pipe) | `decompiler.py ... \| context.py postprocess ...` |
 | `sigdb.py build $MANIFEST` | Build/extend signature DB from manifest | `sigdb.py build sources.json` |
 | `sigdb.py pull` | Download signature DB from HuggingFace | `sigdb.py pull` or `sigdb.py pull --sources` |
