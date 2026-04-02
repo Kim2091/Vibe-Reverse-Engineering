@@ -21,6 +21,7 @@ namespace comp
 			skin_exp_decl_->Release();
 			skin_exp_decl_ = nullptr;
 		}
+		p_this = nullptr;
 	}
 
 	HRESULT skinning::draw_skinned_dip(IDirect3DDevice9* dev,

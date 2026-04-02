@@ -101,11 +101,17 @@ def _get_reg(insn, idx: int) -> str | None:
 
 
 def _get_mem(insn, idx: int) -> tuple[str, int] | None:
-    """Extract (base_reg, disp) from memory operand at idx, or None."""
+    """Extract (base_reg, disp) from memory operand at idx, or None.
+
+    Returns None when an index register is present (scaled index addressing)
+    since the displacement alone doesn't represent the full address.
+    """
     if not hasattr(insn, "operands") or idx >= len(insn.operands):
         return None
     op = insn.operands[idx]
     if op.type == x86.X86_OP_MEM:
+        if op.mem.index:
+            return None
         base = insn.reg_name(op.mem.base) if op.mem.base else ""
         return (base, op.mem.disp)
     return None
@@ -351,8 +357,12 @@ def backward_slice(
 ) -> list[tuple[int, str, str]]:
     """Backward slice: find instructions contributing to target_reg at target_va.
 
+    Walks backward linearly from target_va, ignoring control flow. Results are
+    exact for straight-line code but approximate when the instruction list spans
+    multiple basic blocks (branch targets and merge points are not tracked).
+
     Args:
-        insns: Instruction list (single basic block or linear sequence).
+        insns: Instruction list (may span multiple basic blocks).
         target_va: Address of the instruction where we want the value.
         target_reg: Register name to trace (e.g., "eax").
         max_depth: Max instructions to walk backward.
@@ -394,6 +404,89 @@ def backward_slice(
 
     result.reverse()
     return result
+
+
+def backward_slice_cfg(
+    b: Binary, func_va: int, target_va: int, target_reg: str,
+    max_depth: int = 50, max_size: int = 0x4000,
+) -> list[tuple[int, str, str]]:
+    """CFG-aware backward slice: trace register contributions respecting control flow.
+
+    Walks backward from target_va through the function's CFG, following
+    predecessor edges at block boundaries.
+
+    Args:
+        b: Loaded PE binary.
+        func_va: Function start address.
+        target_va: Address where we want the register value.
+        target_reg: Register name to trace (e.g., "eax").
+        max_depth: Max instructions to walk backward per path.
+        max_size: Max scan window for CFG construction.
+
+    Returns:
+        List of (va, register, description) for each contributing instruction,
+        ordered by address.
+    """
+    blocks, edges = build_cfg(b, func_va, max_size)
+    if not blocks:
+        return []
+
+    preds: dict[int, list[int]] = {bva: [] for bva in blocks}
+    for src, dst, _ in edges:
+        if dst in preds:
+            preds[dst].append(src)
+
+    # Find which block contains target_va
+    target_block = None
+    target_idx = None
+    for bva, insns in blocks.items():
+        for i, insn in enumerate(insns):
+            if insn.address == target_va:
+                target_block = bva
+                target_idx = i
+                break
+        if target_block is not None:
+            break
+    if target_block is None:
+        return []
+
+    result: list[tuple[int, str, str]] = []
+    visited: set[tuple[int, frozenset[str]]] = set()
+
+    def _walk(bva: int, end_idx: int, needed: set[str], depth: int):
+        key = (bva, frozenset(needed))
+        if key in visited or not needed or depth >= max_depth:
+            return
+        visited.add(key)
+
+        for i in range(end_idx, -1, -1):
+            if not needed or depth >= max_depth:
+                break
+            insn = blocks[bva][i]
+            writes = _insn_writes(insn)
+            overlap = writes & needed
+            if overlap:
+                desc = f"{insn.mnemonic} {insn.op_str}"
+                for reg in overlap:
+                    result.append((insn.address, reg, desc))
+                needed = needed - overlap | _insn_reads(insn)
+            depth += 1
+
+        if needed:
+            for pred_va in preds.get(bva, []):
+                if pred_va in blocks and blocks[pred_va]:
+                    _walk(pred_va, len(blocks[pred_va]) - 1, set(needed), depth)
+
+    _walk(target_block, target_idx, {target_reg}, 0)
+
+    # Deduplicate and sort by address
+    seen: set[tuple[int, str]] = set()
+    unique: list[tuple[int, str, str]] = []
+    for va, reg, desc in sorted(result):
+        if (va, reg) not in seen:
+            seen.add((va, reg))
+            unique.append((va, reg, desc))
+    return unique
 
 
 # ---------------------------------------------------------------------------
@@ -438,11 +531,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         target_va = int(parts[0], 16)
         target_reg = parts[1]
-        from funcinfo import analyze
-        _, _, end_va = analyze(b, start, args.max_size)
-        func_size = end_va - start if end_va > start else args.max_size
-        insns = b.disasm(start, count=5000, max_bytes=func_size)
-        result = backward_slice(insns, target_va, target_reg)
+        result = backward_slice_cfg(b, start, target_va, target_reg, max_size=args.max_size)
         print(f"Backward slice for {target_reg} at 0x{target_va:0{w}X}:\n")
         for va, reg, desc in result:
             print(f"  0x{va:0{w}X}: {reg} <- {desc}")

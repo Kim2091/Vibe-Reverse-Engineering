@@ -22,7 +22,7 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
-from capstone import CS_ARCH_X86, CS_MODE_32, Cs
+from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import Binary

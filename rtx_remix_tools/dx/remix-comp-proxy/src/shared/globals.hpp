@@ -1,5 +1,6 @@
 #pragma once
 
+// Written once at init, read from the single D3D9 thread — no locks needed.
 namespace shared::globals
 {
 	extern D3DXMATRIX IDENTITY;
@@ -10,12 +11,12 @@ namespace shared::globals
 #define EXE_BASE shared::globals::exe_module_addr
 
 	extern HMODULE exe_hmodule;
-	extern DWORD exe_module_addr;
+	extern DWORD exe_module_addr; // x64: use uintptr_t
 	extern DWORD exe_size;
 	extern void setup_exe_module();
 
 	extern HMODULE dll_hmodule;
-	extern DWORD dll_module_addr;
+	extern DWORD dll_module_addr; // x64: use uintptr_t
 	extern void setup_dll_module(const HMODULE mod);
 
 	extern void setup_homepath();

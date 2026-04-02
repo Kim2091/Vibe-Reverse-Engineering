@@ -20,81 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "retools"))
 
-D3D9_DEVICE_METHODS = {
-    0: "QueryInterface", 1: "AddRef", 2: "Release",
-    3: "TestCooperativeLevel", 4: "GetAvailableTextureMem",
-    5: "EvictManagedResources", 6: "GetDirect3D", 7: "GetDeviceCaps",
-    8: "GetDisplayMode", 9: "GetCreationParameters",
-    10: "SetCursorProperties", 11: "SetCursorPosition", 12: "ShowCursor",
-    13: "CreateAdditionalSwapChain", 14: "GetSwapChain",
-    15: "GetNumberOfSwapChains", 16: "Reset", 17: "Present",
-    18: "GetBackBuffer", 19: "GetRasterStatus", 20: "SetDialogBoxMode",
-    21: "SetGammaRamp", 22: "GetGammaRamp", 23: "CreateTexture",
-    24: "CreateVolumeTexture", 25: "CreateCubeTexture",
-    26: "CreateVertexBuffer", 27: "CreateIndexBuffer",
-    28: "CreateRenderTarget", 29: "CreateDepthStencilSurface",
-    30: "UpdateSurface", 31: "UpdateTexture", 32: "GetRenderTargetData",
-    33: "GetFrontBufferData", 34: "StretchRect", 35: "ColorFill",
-    36: "CreateOffscreenPlainSurface", 37: "SetRenderTarget",
-    38: "GetRenderTarget", 39: "SetDepthStencilSurface",
-    40: "GetDepthStencilSurface", 41: "BeginScene", 42: "EndScene",
-    43: "Clear", 44: "SetTransform", 45: "GetTransform",
-    46: "MultiplyTransform", 47: "SetViewport", 48: "GetViewport",
-    49: "SetMaterial", 50: "GetMaterial", 51: "SetLight", 52: "GetLight",
-    53: "LightEnable", 54: "GetLightEnable", 55: "SetClipPlane",
-    56: "GetClipPlane", 57: "SetRenderState", 58: "GetRenderState",
-    59: "CreateStateBlock", 60: "BeginStateBlock", 61: "EndStateBlock",
-    62: "SetClipStatus", 63: "GetClipStatus", 64: "GetTexture",
-    65: "SetTexture", 66: "GetTextureStageState", 67: "SetTextureStageState",
-    68: "GetSamplerState", 69: "SetSamplerState", 70: "ValidateDevice",
-    71: "SetPaletteEntries", 72: "GetPaletteEntries",
-    73: "SetCurrentTexturePalette", 74: "GetCurrentTexturePalette",
-    75: "SetScissorRect", 76: "GetScissorRect",
-    77: "SetSoftwareVertexProcessing", 78: "GetSoftwareVertexProcessing",
-    79: "SetNPatchMode", 80: "GetNPatchMode",
-    81: "DrawPrimitive", 82: "DrawIndexedPrimitive",
-    83: "DrawPrimitiveUP", 84: "DrawIndexedPrimitiveUP",
-    85: "ProcessVertices", 86: "CreateVertexDeclaration",
-    87: "SetVertexDeclaration", 88: "GetVertexDeclaration",
-    89: "SetFVF", 90: "GetFVF", 91: "CreateVertexShader",
-    92: "SetVertexShader", 93: "GetVertexShader",
-    94: "SetVertexShaderConstantF", 95: "GetVertexShaderConstantF",
-    96: "SetVertexShaderConstantI", 97: "GetVertexShaderConstantI",
-    98: "SetVertexShaderConstantB", 99: "GetVertexShaderConstantB",
-    100: "SetStreamSource", 101: "GetStreamSource",
-    102: "SetStreamSourceFreq", 103: "GetStreamSourceFreq",
-    104: "SetIndices", 105: "GetIndices",
-    106: "CreatePixelShader", 107: "SetPixelShader",
-    108: "GetPixelShader", 109: "SetPixelShaderConstantF",
-    110: "GetPixelShaderConstantF", 111: "SetPixelShaderConstantI",
-    112: "GetPixelShaderConstantI", 113: "SetPixelShaderConstantB",
-    114: "GetPixelShaderConstantB", 115: "DrawRectPatch",
-    116: "DrawTriPatch", 117: "DeletePatch", 118: "CreateQuery",
-}
+from dx9_common import load_binary, va_to_offset, D3D9_DEVICE_VTABLE
 
-
-def parse_pe(data):
-    pe_sig_off = struct.unpack_from("<I", data, 0x3C)[0]
-    image_base = struct.unpack_from("<I", data, pe_sig_off + 52)[0]
-    num_sections = struct.unpack_from("<H", data, pe_sig_off + 6)[0]
-    opt_hdr_size = struct.unpack_from("<H", data, pe_sig_off + 20)[0]
-    section_start = pe_sig_off + 24 + opt_hdr_size
-    sections = []
-    for i in range(num_sections):
-        off = section_start + i * 40
-        s_vsz = struct.unpack_from("<I", data, off + 8)[0]
-        s_va = struct.unpack_from("<I", data, off + 12)[0]
-        s_rawsz = struct.unpack_from("<I", data, off + 16)[0]
-        s_raw = struct.unpack_from("<I", data, off + 20)[0]
-        sections.append((s_va, s_raw, s_rawsz, s_vsz))
-    return image_base, sections
-
-
-def rva_to_offset(sections, rva):
-    for s_va, s_raw, s_rawsz, s_vsz in sections:
-        if s_va <= rva < s_va + s_vsz:
-            return rva - s_va + s_raw
-    return None
+# Derive slot-indexed method dict from offset-keyed vtable
+D3D9_DEVICE_METHODS = {offset // 4: name for offset, name in D3D9_DEVICE_VTABLE.items()}
 
 
 def main():
@@ -113,13 +42,10 @@ def main():
         print(f"ERROR: start_va 0x{scan_start:X} >= end_va 0x{scan_end:X} — nothing to scan")
         sys.exit(1)
 
-    data = Path(args.binary).read_bytes()
-    image_base, sections = parse_pe(data)
+    data, image_base, sections = load_binary(args.binary)
 
-    scan_rva_start = scan_start - image_base
-    scan_rva_end = scan_end - image_base
-    raw_start = rva_to_offset(sections, scan_rva_start)
-    raw_end = rva_to_offset(sections, scan_rva_end)
+    raw_start = va_to_offset(sections, image_base, scan_start)
+    raw_end = va_to_offset(sections, image_base, scan_end)
 
     if raw_start is None or raw_end is None:
         print(f"ERROR: scan range 0x{scan_start:X}-0x{scan_end:X} not in any section")
@@ -144,9 +70,9 @@ def main():
                     slot = disp // 4
                     if slot in D3D9_DEVICE_METHODS:
                         va = None
-                        for s_va, s_raw, s_rawsz, s_vsz in sections:
-                            if s_raw <= i < s_raw + s_rawsz:
-                                va = image_base + s_va + (i - s_raw)
+                        for s in sections:
+                            if s['raw'] <= i < s['raw'] + s['rawsz']:
+                                va = image_base + s['va'] + (i - s['raw'])
                                 break
                         if va:
                             vtable_calls.append((va, disp, D3D9_DEVICE_METHODS[slot], 'mov'))
@@ -164,9 +90,9 @@ def main():
                     slot = disp // 4
                     if slot in D3D9_DEVICE_METHODS:
                         va = None
-                        for s_va, s_raw, s_rawsz, s_vsz in sections:
-                            if s_raw <= i < s_raw + s_rawsz:
-                                va = image_base + s_va + (i - s_raw)
+                        for s in sections:
+                            if s['raw'] <= i < s['raw'] + s['rawsz']:
+                                va = image_base + s['va'] + (i - s['raw'])
                                 break
                         if va:
                             vtable_calls.append((va, disp, D3D9_DEVICE_METHODS[slot], 'call'))

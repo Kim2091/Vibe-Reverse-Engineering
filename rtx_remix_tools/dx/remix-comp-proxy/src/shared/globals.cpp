@@ -21,7 +21,7 @@ namespace shared::globals
 	void setup_exe_module()
 	{
 		exe_hmodule = GetModuleHandleA(nullptr);
-		exe_module_addr = (DWORD)exe_hmodule;
+		exe_module_addr = (DWORD)exe_hmodule; // x64: use uintptr_t
 
 		MODULEINFO moduleInfo;
 		if (!GetModuleInformation(GetCurrentProcess(), exe_hmodule, &moduleInfo, sizeof(moduleInfo))) {
@@ -36,7 +36,7 @@ namespace shared::globals
 	void setup_dll_module(const HMODULE mod)
 	{
 		dll_hmodule = mod;
-		dll_module_addr = (DWORD)dll_hmodule;
+		dll_module_addr = (DWORD)dll_hmodule; // x64: use uintptr_t
 	}
 
 	void setup_homepath()

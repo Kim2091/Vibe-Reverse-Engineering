@@ -38,6 +38,7 @@ namespace comp
 	diagnostics::~diagnostics()
 	{
 		close_log();
+		p_this = nullptr;
 	}
 
 	// ---- File management ----

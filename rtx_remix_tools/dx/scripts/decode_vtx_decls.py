@@ -19,6 +19,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "retools"))
 
+from dx9_common import (
+    load_binary, find_text_section, va_to_offset,
+    scan_vtable_calls, scan_vtable_mov, find_push_addr_near_call,
+)
+
 D3DDECLTYPE = {
     0: "FLOAT1", 1: "FLOAT2", 2: "FLOAT3", 3: "FLOAT4",
     4: "D3DCOLOR", 5: "UBYTE4", 6: "SHORT2", 7: "SHORT4",
@@ -38,32 +43,6 @@ TYPE_SIZES = {
     0: 4, 1: 8, 2: 12, 3: 16, 4: 4, 5: 4, 6: 4, 7: 8,
     8: 4, 9: 4, 10: 8, 11: 4, 12: 8, 15: 4, 16: 8
 }
-
-
-def parse_pe(data):
-    pe_sig_off = struct.unpack_from("<I", data, 0x3C)[0]
-    image_base = struct.unpack_from("<I", data, pe_sig_off + 52)[0]
-    num_sections = struct.unpack_from("<H", data, pe_sig_off + 6)[0]
-    opt_hdr_size = struct.unpack_from("<H", data, pe_sig_off + 20)[0]
-    section_start = pe_sig_off + 24 + opt_hdr_size
-    sections = []
-    for i in range(num_sections):
-        off = section_start + i * 40
-        s_vsz = struct.unpack_from("<I", data, off + 8)[0]
-        s_va = struct.unpack_from("<I", data, off + 12)[0]
-        s_rawsz = struct.unpack_from("<I", data, off + 16)[0]
-        s_raw = struct.unpack_from("<I", data, off + 20)[0]
-        chars = struct.unpack_from("<I", data, off + 36)[0]
-        sections.append((s_va, s_raw, s_rawsz, s_vsz, chars))
-    return image_base, sections
-
-
-def va_to_offset(sections, image_base, va):
-    rva = va - image_base
-    for s_va, s_raw, s_rawsz, s_vsz, _ in sections:
-        if s_va <= rva < s_va + s_vsz:
-            return rva - s_va + s_raw
-    return None
 
 
 MAX_ELEMENTS = 64  # D3D9 max is 64 elements per declaration
@@ -133,76 +112,32 @@ def scan_for_decls(data, sections, image_base):
     """Auto-discover vertex declarations by finding CreateVertexDeclaration calls."""
     found = set()
 
-    # Find executable section
-    text_raw = text_size = text_va = None
-    for s_va, s_raw, s_rawsz, s_vsz, chars in sections:
-        if chars & 0x20000000:
-            text_raw, text_size, text_va = s_raw, s_rawsz, image_base + s_va
-            break
-    if text_raw is None:
+    raw_start, raw_size, text_va = find_text_section(data, image_base, sections)
+    if raw_start is None:
         return []
 
-    text_data = data[text_raw:text_raw + text_size]
+    text_data = data[raw_start:raw_start + raw_size]
 
-    # Search for push <addr>; ... call [reg+0x158] = CreateVertexDeclaration
-    # Look for push imm32 (0x68 XXXXXXXX) near CreateVertexDeclaration calls
-    cvd_offset = struct.pack('<I', 0x158)
-    regs = {0x90: 'eax', 0x91: 'ecx', 0x92: 'edx', 0x93: 'ebx',
-            0x96: 'esi', 0x97: 'edi'}
-
-    call_sites = []
-    for mod_rm, reg_name in regs.items():
-        pattern = bytes([0xFF, mod_rm]) + cvd_offset
-        pos = 0
-        while True:
-            idx = text_data.find(pattern, pos)
-            if idx == -1:
-                break
-            call_sites.append(text_va + idx)
-            pos = idx + 1
-
+    # Find CreateVertexDeclaration (vtable+0x158) call sites
+    call_vas = [va for va, _ in scan_vtable_calls(text_data, text_va, 0x158)]
     # Also check mov reg,[reg+0x158] indirect pattern
-    dst_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    src_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    for src_idx in src_regs:
-        for dst_idx in dst_regs:
-            modrm = 0x80 | (dst_idx << 3) | src_idx
-            pattern = bytes([0x8B, modrm]) + cvd_offset
-            pos = 0
-            while True:
-                idx = text_data.find(pattern, pos)
-                if idx == -1:
-                    break
-                call_sites.append(text_va + idx)
-                pos = idx + 1
+    call_vas += [va for va, _ in scan_vtable_mov(text_data, text_va, 0x158)]
 
-    print(f"Found {len(call_sites)} CreateVertexDeclaration call sites")
+    print(f"Found {len(call_vas)} CreateVertexDeclaration call sites")
 
-    # For each call site, scan backwards for push imm32
-    for call_va in sorted(call_sites):
-        file_off = va_to_offset(sections, image_base, call_va)
-        if file_off is None:
-            continue
-        # Look at 60 bytes before the call
-        start = max(0, file_off - 60)
-        context = data[start:file_off]
-
-        # Find push imm32 (0x68) instructions
-        i = 0
-        while i < len(context) - 4:
-            if context[i] == 0x68:
-                addr = struct.unpack_from('<I', context, i + 1)[0]
-                # Check if this looks like a valid VA pointing to data
-                off_check = va_to_offset(sections, image_base, addr)
-                if off_check is not None:
-                    # Verify it looks like a D3DVERTEXELEMENT9
-                    elem = data[off_check:off_check + 8]
-                    if len(elem) >= 8:
-                        stream, offset, typ, method, usage, usage_idx = \
-                            struct.unpack_from("<HHBBBB", elem)
-                        if stream <= 4 and typ <= 17 and usage <= 13:
-                            found.add(addr)
-            i += 1
+    # For each call site, find pushed addresses that point to valid D3DVERTEXELEMENT9
+    for call_va in sorted(call_vas):
+        for _, addr in find_push_addr_near_call(data, sections, image_base, call_va, window=60):
+            off_check = va_to_offset(sections, image_base, addr)
+            if off_check is None:
+                continue
+            elem = data[off_check:off_check + 8]
+            if len(elem) < 8:
+                continue
+            stream, offset, typ, method, usage, usage_idx = \
+                struct.unpack_from("<HHBBBB", elem)
+            if stream <= 4 and typ <= 17 and usage <= 13:
+                found.add(addr)
 
     return sorted(found)
 
@@ -216,8 +151,7 @@ def main():
                    help="Auto-scan for CreateVertexDeclaration call sites")
     args = p.parse_args()
 
-    data = Path(args.binary).read_bytes()
-    image_base, sections = parse_pe(data)
+    data, image_base, sections = load_binary(args.binary)
     print(f"ImageBase: 0x{image_base:08X}")
 
     addresses = list(args.addresses)

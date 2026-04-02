@@ -194,19 +194,8 @@ def find_containing_function(data, sections, image_base, va, search_back=256):
     return best
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("binary", help="Path to PE binary (.exe / .dll)")
-    args = p.parse_args()
-
-    data, image_base, sections = load_binary(args.binary)
-    text_data, text_va = load_text_section(data, image_base, sections)
-    print_header(data, image_base, sections)
-
-    # ================================================================
-    # Phase 1: SetVertexShaderConstantF with count=4
-    # ================================================================
+def _phase1_svscf_uploads(data, image_base, sections, text_data, text_va):
+    """Phase 1: Find SetVertexShaderConstantF sites with count=4 (matrix uploads)."""
     print("\n=== Phase 1: SetVertexShaderConstantF matrix uploads ===")
 
     direct = scan_vtable_calls(text_data, text_va, SVSCF)
@@ -283,9 +272,11 @@ def main():
     if unknown_sites > 0:
         print(f"\n  ({unknown_sites} sites with register-loaded arguments -- not decoded)")
 
-    # ================================================================
-    # Phase 2: Function grouping
-    # ================================================================
+    return matrix_regs
+
+
+def _phase2_function_grouping(data, sections, image_base, matrix_regs):
+    """Phase 2: Group matrix uploads by containing function."""
     print(f"\n\n=== Phase 2: Matrix upload function analysis ===")
 
     # Group all matrix uploads by containing function
@@ -335,9 +326,9 @@ def main():
         print(f"  Game may use a single upload function called with different arguments,")
         print(f"  or matrices are uploaded via D3DX constant tables.")
 
-    # ================================================================
-    # Phase 3: CTAB extraction from embedded shaders
-    # ================================================================
+
+def _phase3_ctab_extraction(data, sections, image_base, text_data, text_va):
+    """Phase 3: Extract matrix constants from embedded shader CTABs."""
     print(f"\n\n=== Phase 3: Shader CTAB constant names ===")
 
     # Find CreateVertexShader sites and extract bytecode
@@ -398,9 +389,11 @@ def main():
         print(f"  Game may load shaders from files or compile at runtime.")
         print(f"  Use dx9tracer --shader-map for runtime CTAB extraction.")
 
-    # ================================================================
-    # Phase 4: SetTransform cross-reference
-    # ================================================================
+    return ctab_matrices
+
+
+def _phase4_set_transform(text_data, text_va):
+    """Phase 4: Cross-reference SetTransform calls."""
     print(f"\n\n=== Phase 4: SetTransform cross-reference ===")
 
     st_direct = scan_vtable_calls(text_data, text_va, SET_TRANSFORM)
@@ -416,9 +409,9 @@ def main():
         print(f"\n  SetTransform: 0 call sites")
         print(f"  Game is fully shader-based -- all matrices come from VS constants.")
 
-    # ================================================================
-    # Phase 5: Suggested layout
-    # ================================================================
+
+def _phase5_suggested_layout(matrix_regs, ctab_matrices):
+    """Phase 5: Suggest remix-comp-proxy.ini register layout."""
     print(f"\n\n{'='*60}")
     print(f"=== Suggested remix-comp-proxy.ini Register Layout ===")
     print(f"{'='*60}")
@@ -518,6 +511,23 @@ def main():
         print(f"  capture W, V, P individually before any concatenation.")
 
     print("\n--- DONE ---")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("binary", help="Path to PE binary (.exe / .dll)")
+    args = p.parse_args()
+
+    data, image_base, sections = load_binary(args.binary)
+    text_data, text_va = load_text_section(data, image_base, sections)
+    print_header(data, image_base, sections)
+
+    matrix_regs = _phase1_svscf_uploads(data, image_base, sections, text_data, text_va)
+    _phase2_function_grouping(data, sections, image_base, matrix_regs)
+    ctab_matrices = _phase3_ctab_extraction(data, sections, image_base, text_data, text_va)
+    _phase4_set_transform(text_data, text_va)
+    _phase5_suggested_layout(matrix_regs, ctab_matrices)
 
 
 if __name__ == "__main__":

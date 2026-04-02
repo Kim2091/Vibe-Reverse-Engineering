@@ -114,6 +114,10 @@ def _hex_to_c(hex_str: str) -> str:
 def _c_addr(addr_str: str, arch: str, base: int | None = None) -> str:
     val = int(addr_str, 16)
     if base is not None:
+        if val < base:
+            raise ValueError(
+                f"address 0x{val:X} is below image base 0x{base:X}"
+            )
         rva = val - base
         d = 16 if arch == "x64" else 8
         return f"rva(0x{rva:0{d}X})"

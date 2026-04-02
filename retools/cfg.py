@@ -63,7 +63,7 @@ def _resolve_switch(
     if not mops:
         return None
     mop = mops[0]
-    if not mop.index or mop.scale != 4:
+    if not mop.index or mop.scale not in (4, 8):
         return None
 
     table_base = mop.disp

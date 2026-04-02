@@ -384,7 +384,7 @@ namespace comp
 	{
 		if (skipping_) return;
 		if (!first_arg_) buf_append(",", 1);
-		buf_printf("\"%s\":\"0x%08X\"", name, reinterpret_cast<DWORD>(val));
+		buf_printf("\"%s\":\"0x%08X\"", name, reinterpret_cast<DWORD>(val)); // x64: use uintptr_t
 		first_arg_ = false;
 	}
 
@@ -553,7 +553,7 @@ namespace comp
 			for (USHORT i = 0; i < count; i++)
 			{
 				if (i > 0) buf_append(",", 1);
-				buf_printf("\"0x%08X\"", reinterpret_cast<DWORD>(frames[i]));
+				buf_printf("\"0x%08X\"", reinterpret_cast<DWORD>(frames[i])); // x64: use uintptr_t
 			}
 			buf_append("]", 1);
 		}
@@ -564,7 +564,7 @@ namespace comp
 		if (skipping_ || !handle) return;
 		// Append created_handle field before record_end closes the line
 		close_sections();
-		buf_printf(",\"created_handle\":\"0x%08X\"", reinterpret_cast<DWORD>(handle));
+		buf_printf(",\"created_handle\":\"0x%08X\"", reinterpret_cast<DWORD>(handle)); // x64: use uintptr_t
 	}
 
 	void tracer::record_end()

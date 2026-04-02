@@ -258,5 +258,6 @@ namespace comp
 	renderer::~renderer()
 	{
 		tex_addons::init_texture_addons(true);
+		p_this = nullptr;
 	}
 }

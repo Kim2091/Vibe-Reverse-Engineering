@@ -12,126 +12,23 @@ Usage:
 """
 import argparse
 import sys
-import struct
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "retools"))
 
-def parse_pe(data):
-    pe_sig_off = struct.unpack_from("<I", data, 0x3C)[0]
-    image_base = struct.unpack_from("<I", data, pe_sig_off + 52)[0]
-    num_sections = struct.unpack_from("<H", data, pe_sig_off + 6)[0]
-    opt_hdr_size = struct.unpack_from("<H", data, pe_sig_off + 20)[0]
-    section_start = pe_sig_off + 24 + opt_hdr_size
-    sections = []
-    for i in range(num_sections):
-        off = section_start + i * 40
-        s_vsz = struct.unpack_from("<I", data, off + 8)[0]
-        s_va = struct.unpack_from("<I", data, off + 12)[0]
-        s_rawsz = struct.unpack_from("<I", data, off + 16)[0]
-        s_raw = struct.unpack_from("<I", data, off + 20)[0]
-        sections.append((s_va, s_raw, s_rawsz, s_vsz))
-    return image_base, sections
+from dx9_common import (
+    load_binary, load_text_section, scan_vtable_calls, scan_vtable_mov,
+    analyze_pushes,
+)
 
-def va_to_offset(sections, image_base, va):
-    rva = va - image_base
-    for s_va, s_raw, s_rawsz, s_vsz in sections:
-        if s_va <= rva < s_va + s_vsz:
-            return rva - s_va + s_raw
-    return None
-
-def find_text(data, image_base, sections):
-    pe_sig_off = struct.unpack_from("<I", data, 0x3C)[0]
-    num_sections = struct.unpack_from("<H", data, pe_sig_off + 6)[0]
-    opt_hdr_size = struct.unpack_from("<H", data, pe_sig_off + 20)[0]
-    section_start = pe_sig_off + 24 + opt_hdr_size
-    for i in range(num_sections):
-        off = section_start + i * 40
-        chars = struct.unpack_from("<I", data, off + 36)[0]
-        if chars & 0x20000000:
-            s_va = struct.unpack_from("<I", data, off + 12)[0]
-            s_raw = struct.unpack_from("<I", data, off + 20)[0]
-            s_rawsz = struct.unpack_from("<I", data, off + 16)[0]
-            return s_raw, s_rawsz, image_base + s_va
-    return None, None, None
-
-def scan_vtable_calls(text_data, text_va, vtable_offset):
-    """Find call [reg+vtable_offset] patterns."""
-    regs = {0x90: 'eax', 0x91: 'ecx', 0x92: 'edx', 0x93: 'ebx',
-            0x96: 'esi', 0x97: 'edi'}
-    results = []
-    offset_bytes = struct.pack('<I', vtable_offset)
-    for mod_rm, reg_name in regs.items():
-        pattern = bytes([0xFF, mod_rm]) + offset_bytes
-        pos = 0
-        while True:
-            idx = text_data.find(pattern, pos)
-            if idx == -1:
-                break
-            va = text_va + idx
-            results.append((va, reg_name))
-            pos = idx + 1
-    results.sort()
-    return results
-
-def scan_vtable_mov(text_data, text_va, vtable_offset):
-    """Find mov reg, [reg+vtable_offset] patterns (indirect dispatch)."""
-    dst_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    src_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    results = []
-    offset_bytes = struct.pack('<I', vtable_offset)
-    for src_idx, src_name in src_regs.items():
-        for dst_idx, dst_name in dst_regs.items():
-            modrm = 0x80 | (dst_idx << 3) | src_idx
-            pattern = bytes([0x8B, modrm]) + offset_bytes
-            pos = 0
-            while True:
-                idx = text_data.find(pattern, pos)
-                if idx == -1:
-                    break
-                va = text_va + idx
-                results.append((va, f"mov {dst_name}, [{src_name}+0x{vtable_offset:03X}]"))
-                pos = idx + 1
-    results.sort()
-    return results
-
-def analyze_pushes(data, sections, image_base, raw_start, text_va, call_va):
-    """Analyze push instructions before a call to find arguments."""
-    file_off = va_to_offset(sections, image_base, call_va)
-    if file_off is None:
-        return []
-    context_start = max(0, file_off - 40)
-    context = data[context_start:file_off + 6]
-    pushes = []
-    i = 0
-    while i < len(context) - 6:
-        b = context[i]
-        if b == 0x6A:
-            val = context[i + 1]
-            push_va = call_va - (file_off - context_start - i)
-            pushes.append((push_va, val, 'imm8'))
-            i += 2
-        elif b == 0x68:
-            val = struct.unpack_from('<I', context, i + 1)[0]
-            push_va = call_va - (file_off - context_start - i)
-            pushes.append((push_va, val, 'imm32'))
-            i += 5
-        else:
-            i += 1
-    return pushes
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("binary", help="Path to PE binary (.exe / .dll)")
     args = p.parse_args()
 
-    data = Path(args.binary).read_bytes()
-    image_base, sections = parse_pe(data)
-    raw_start, raw_size, text_va = find_text(data, image_base, sections)
-    if raw_start is None:
-        print("ERROR: No executable section found")
-        return
-    text_data = data[raw_start:raw_start + raw_size]
+    data, image_base, sections = load_binary(args.binary)
+    text_data, text_va = load_text_section(data, image_base, sections)
 
     # --- SetVertexShaderConstantF (0x178) ---
     print("=== SetVertexShaderConstantF call sites (call [reg+0x178]) ===")
@@ -156,7 +53,7 @@ def main():
         if len(all_sites) > 50:
             print(f"  (showing first 50 of {len(all_sites)} sites)")
         for va, reg in all_sites[:50]:
-            pushes = analyze_pushes(data, sections, image_base, raw_start, text_va, va)
+            pushes = analyze_pushes(data, sections, image_base, va)
             if pushes:
                 print(f"\n  0x{va:08X}: call [{reg}+0x178]")
                 for pva, pval, ptype in pushes[-5:]:

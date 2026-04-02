@@ -6,6 +6,7 @@ namespace comp
 	{
 	public:
 		imgui();
+		~imgui() { p_this = nullptr; }
 
 		static inline imgui* p_this = nullptr;
 		static imgui* get() { return p_this; }

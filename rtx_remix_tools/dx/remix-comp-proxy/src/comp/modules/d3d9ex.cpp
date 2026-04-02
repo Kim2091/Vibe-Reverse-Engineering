@@ -1,4 +1,5 @@
-﻿#include "std_include.hpp"
+﻿// IDirect3DDevice9 proxy — thin delegation hub for all 119 vtable methods.
+#include "std_include.hpp"
 #include "d3d9ex.hpp"
 #include "../d3d9_proxy.hpp"
 
@@ -726,6 +727,8 @@ namespace comp
 		return hr;
 	}
 
+	// Swallowed during FFP so Remix sees fixed-function draws.
+	// GetPixelShader will return the previous shader, not what the game set.
 	HRESULT d3d9ex::D3D9Device::SetPixelShader(IDirect3DPixelShader9* pShader)
 	{
 		TRACE_IF_ACTIVE(trace_SetPixelShader, pShader);
@@ -901,8 +904,10 @@ namespace comp
 	{
 		HRESULT hres = m_pIDirect3D9->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
 		shared::common::log("d3d9", "m_pIDirect3D9->CreateDevice", shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
-		*ppReturnedDeviceInterface = new d3d9ex::D3D9Device(*ppReturnedDeviceInterface);
-		shared::globals::d3d_device = *ppReturnedDeviceInterface;
+		if (SUCCEEDED(hres) && *ppReturnedDeviceInterface) {
+			*ppReturnedDeviceInterface = new d3d9ex::D3D9Device(*ppReturnedDeviceInterface);
+			shared::globals::d3d_device = *ppReturnedDeviceInterface;
+		}
 
 		return hres;
 	}
@@ -1006,8 +1011,10 @@ namespace comp
 		HRESULT hres = m_pIDirect3D9Ex->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
 		shared::common::log("d3d9", "m_pIDirect3D9Ex->CreateDevice", shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 
-		*ppReturnedDeviceInterface = new d3d9ex::D3D9Device(*ppReturnedDeviceInterface);
-		shared::globals::d3d_device = *ppReturnedDeviceInterface;
+		if (SUCCEEDED(hres) && *ppReturnedDeviceInterface) {
+			*ppReturnedDeviceInterface = new d3d9ex::D3D9Device(*ppReturnedDeviceInterface);
+			shared::globals::d3d_device = *ppReturnedDeviceInterface;
+		}
 
 		return hres;
 	}

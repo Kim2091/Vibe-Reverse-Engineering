@@ -1,6 +1,7 @@
 #pragma once
 #include "shared/globals.hpp"
 #include <filesystem>
+#include <mutex>
 
 namespace shared::common
 {
@@ -126,19 +127,16 @@ namespace shared::common
 	}
 
 	inline std::ofstream log_file;
-	inline bool log_file_initiated = false;
+	inline std::once_flag log_file_once;
 
 	inline void init_log_file()
 	{
-		if (!log_file_initiated)
-		{
-			log_file_initiated = true;
-
+		std::call_once(log_file_once, []() {
 			const std::string dir_path = shared::globals::root_path + "\\rtx_comp";
 			std::filesystem::create_directories(dir_path);
 			const std::string file_path = dir_path + "\\console.log";
 			log_file.open(file_path, std::ios::out | std::ios::trunc);
-		}
+		});
 	}
 
 	inline void log(const std::string_view& module_str, const std::string_view& msg, LOG_TYPE type = LOG_TYPE::LOG_TYPE_DEFAULT, bool highlight = false, bool newline_infront = false)

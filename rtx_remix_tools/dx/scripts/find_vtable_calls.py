@@ -12,10 +12,11 @@ Usage:
 """
 import argparse
 import sys
-import struct
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "retools"))
+
+from dx9_common import load_binary, load_text_section, scan_all_patterns
 
 # ID3DXConstantTable vtable (32-bit, offset = slot * 4)
 D3DX_CONST_TABLE = {
@@ -50,101 +51,20 @@ D3D9_KEY_METHODS = {
 }
 
 
-def parse_pe(data):
-    pe_sig_off = struct.unpack_from("<I", data, 0x3C)[0]
-    image_base = struct.unpack_from("<I", data, pe_sig_off + 52)[0]
-    num_sections = struct.unpack_from("<H", data, pe_sig_off + 6)[0]
-    opt_hdr_size = struct.unpack_from("<H", data, pe_sig_off + 20)[0]
-    section_start = pe_sig_off + 24 + opt_hdr_size
-    sections = []
-    for i in range(num_sections):
-        off = section_start + i * 40
-        s_vsz = struct.unpack_from("<I", data, off + 8)[0]
-        s_va = struct.unpack_from("<I", data, off + 12)[0]
-        s_rawsz = struct.unpack_from("<I", data, off + 16)[0]
-        s_raw = struct.unpack_from("<I", data, off + 20)[0]
-        chars = struct.unpack_from("<I", data, off + 36)[0]
-        sections.append((s_va, s_raw, s_rawsz, s_vsz, chars))
-    return image_base, sections
-
-
-def find_text(data, image_base, sections):
-    for s_va, s_raw, s_rawsz, s_vsz, chars in sections:
-        if chars & 0x20000000:
-            return s_raw, s_rawsz, image_base + s_va
-    return None, None, None
-
-
-def scan_calls(text_data, text_va, vtable_off):
-    """Find both call [reg+off] and mov reg,[reg+off] patterns."""
-    results = []
-
-    # call [reg+disp8] (offset <= 0x7F)
-    if vtable_off <= 0x7F:
-        reg_map_byte = {0x50: 'eax', 0x51: 'ecx', 0x52: 'edx', 0x53: 'ebx',
-                        0x55: 'ebp', 0x56: 'esi', 0x57: 'edi'}
-        for mod_rm, reg_name in reg_map_byte.items():
-            pattern = bytes([0xFF, mod_rm, vtable_off])
-            pos = 0
-            while True:
-                idx = text_data.find(pattern, pos)
-                if idx == -1:
-                    break
-                results.append((text_va + idx, f"call [{reg_name}+0x{vtable_off:02X}]"))
-                pos = idx + 1
-
-    # call [reg+disp32]
-    reg_map_dword = {0x90: 'eax', 0x91: 'ecx', 0x92: 'edx', 0x93: 'ebx',
-                     0x95: 'ebp', 0x96: 'esi', 0x97: 'edi'}
-    offset_bytes = struct.pack('<I', vtable_off)
-    for mod_rm, reg_name in reg_map_dword.items():
-        pattern = bytes([0xFF, mod_rm]) + offset_bytes
-        pos = 0
-        while True:
-            idx = text_data.find(pattern, pos)
-            if idx == -1:
-                break
-            results.append((text_va + idx, f"call [{reg_name}+0x{vtable_off:03X}]"))
-            pos = idx + 1
-
-    # mov reg, [reg+disp32] (indirect dispatch)
-    dst_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    src_regs = {0: 'eax', 1: 'ecx', 2: 'edx', 3: 'ebx', 5: 'ebp', 6: 'esi', 7: 'edi'}
-    for src_idx, src_name in src_regs.items():
-        for dst_idx, dst_name in dst_regs.items():
-            modrm = 0x80 | (dst_idx << 3) | src_idx
-            pattern = bytes([0x8B, modrm]) + offset_bytes
-            pos = 0
-            while True:
-                idx = text_data.find(pattern, pos)
-                if idx == -1:
-                    break
-                results.append((text_va + idx, f"mov {dst_name}, [{src_name}+0x{vtable_off:03X}]"))
-                pos = idx + 1
-
-    results.sort()
-    return results
-
-
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("binary", help="Path to PE binary (.exe / .dll)")
     args = p.parse_args()
 
-    data = Path(args.binary).read_bytes()
-    image_base, sections = parse_pe(data)
-    raw_start, raw_size, text_va = find_text(data, image_base, sections)
-    if raw_start is None:
-        print("ERROR: No executable section found")
-        return
-    text_data = data[raw_start:raw_start + raw_size]
+    data, image_base, sections = load_binary(args.binary)
+    text_data, text_va = load_text_section(data, image_base, sections)
 
     print(f"ImageBase: 0x{image_base:08X}, .text VA: 0x{text_va:08X}")
 
     # --- D3DX Constant Table calls ---
     print("\n=== ID3DXConstantTable vtable calls ===")
     for vtable_off, method_name in sorted(D3DX_CONST_TABLE.items()):
-        results = scan_calls(text_data, text_va, vtable_off)
+        results = scan_all_patterns(text_data, text_va, vtable_off)
         if results:
             print(f"\n  {method_name} (vtable+0x{vtable_off:02X}): {len(results)} sites")
             for va, desc in results[:50]:
@@ -157,7 +77,7 @@ def main():
     # --- Direct D3D9 device vtable calls ---
     print("\n\n=== Direct D3D9 device vtable calls ===")
     for vtable_off, method_name in sorted(D3D9_KEY_METHODS.items()):
-        results = scan_calls(text_data, text_va, vtable_off)
+        results = scan_all_patterns(text_data, text_va, vtable_off)
         if results:
             print(f"\n  {method_name} (vtable+0x{vtable_off:03X}): {len(results)} sites")
             for va, desc in results[:30]:
