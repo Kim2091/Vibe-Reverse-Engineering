@@ -16,7 +16,7 @@ You are helping a user port a DX9 shader-based game to the fixed-function pipeli
 
 ## What remix-comp Does
 
-The codebase is a C++20 compatibility mod based on remix-comp-base that intercepts `IDirect3DDevice9` and:
+The codebase is a d3d9.dll proxy based on remix-comp-base that intercepts `IDirect3DDevice9` and:
 
 1. Captures vertex shader constants (View, Projection, World matrices) from `SetVertexShaderConstantF`
 2. Parses `SetVertexDeclaration` to detect per-element attributes: BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets and types
@@ -42,26 +42,21 @@ The codebase is a C++20 compatibility mod based on remix-comp-base that intercep
 | `src/shared/common/ffp_state.cpp` | FFP state tracker -- engage/disengage, matrix transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP.Registers]`, `[Skinning]`, `[Diagnostics]`, `[Remix]` |
-| `premake5.lua` | Build system (Premake5 + VS2022) |
+| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `build.bat` | Build script: outputs d3d9.dll proxy |
 
-The codebase is C++20, uses Premake5 for build generation, component module system for extensibility.
+The codebase is C++20, uses build.bat for builds, component module system for extensibility.
 
 ## What Needs to Change Per Game
 
-The `remix-comp.ini` file has a `[FFP.Registers]` section that must be set based on RE findings:
+The VS constant register layout is defined in `src/shared/common/ffp_state.hpp` as member defaults. Edit these when porting a new game, then rebuild:
 
-```ini
-[FFP.Registers]
-ViewStart=0
-ViewEnd=4
-ProjStart=4
-ProjEnd=8
-WorldStart=16
-WorldEnd=20
-BoneThreshold=20
-RegsPerBone=3
-BoneMinRegs=3
+```cpp
+int vs_reg_view_start_ = 0;    int vs_reg_view_end_ = 4;
+int vs_reg_proj_start_ = 4;    int vs_reg_proj_end_ = 8;
+int vs_reg_world_start_ = 16;  int vs_reg_world_end_ = 20;
+int vs_reg_bone_threshold_ = 20;
+int vs_regs_per_bone_ = 3;     int vs_bone_min_regs_ = 3;
 ```
 
 Beyond the INI config, users may need to modify:
@@ -131,19 +126,18 @@ This captures: startRegister, Vector4fCount, and the actual float data (first 4 
 
 1. Copy `rtx_remix_tools/dx/remix-comp/src/comp/` to `patches/<GameName>/proxy/comp/`
 2. Copy `remix-comp.ini` from `assets/` to `patches/<GameName>/proxy/`
-3. Edit `remix-comp.ini` `[FFP.Registers]` section with discovered register values
-4. Use the Premake5 template (`premake5_game.lua.template`) for the game-specific build
+3. Edit register layout defaults in `src/shared/common/ffp_state.hpp`
+4. Use `build.bat` for the game-specific build
 5. Update `kb.h` with any function signatures, structs, or globals discovered
 
 ### Step 4: Build and Deploy
 
 ```bash
-cd patches/<GameName>/proxy
-premake5 vs2022
-# Build with Visual Studio or MSBuild
+cd patches/<GameName>
+build.bat release --name <GameName>
 ```
 
-Deploy to game directory: `.asi` file + `remix-comp.ini` + `dinput8.dll` (Ultimate ASI Loader). If using Remix, also place `d3d9_remix.dll` there.
+Deploy: `d3d9.dll` + `remix-comp.ini` to game directory. Place `d3d9_remix.dll` there if using Remix.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -164,7 +158,7 @@ Use this to iterate: wrong matrices -> re-check register mapping. Missing textur
 
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
-| `remix-comp.ini` `[FFP.Registers]` | **YES** -- set register layout |
+| `ffp_state.hpp` register layout defaults | **YES** -- rebuild required |
 | `remix-comp.ini` `[Skinning] Enabled=` | **YES** -- only after rigid FFP works |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |
 | `renderer.cpp` `on_draw_primitive()` | **YES** -- draw routing for non-indexed draws |
@@ -217,7 +211,7 @@ When skinning is enabled via `[Skinning] Enabled=1` in `remix-comp.ini`:
 
 5. **Draw** -- The expanded VB + shared declaration are bound, draw executes with FFP indexed vertex blending. After the draw, original VB/decl/textures are restored.
 
-All of this is infrastructure (no per-game edits). The only game-specific parts are the INI `[FFP.Registers]` bone settings and `[Skinning] Enabled=` toggle.
+All of this is infrastructure (no per-game edits). The only game-specific parts are the `ffp_state.hpp` bone register settings and `[Skinning] Enabled=` toggle.
 
 ## Common Pitfalls
 

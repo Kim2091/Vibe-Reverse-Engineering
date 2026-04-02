@@ -4,7 +4,7 @@ applyTo: "rtx_remix_tools/**,patches/**/src/**,**/renderer.cpp,**/renderer.hpp,*
 
 # DX9 FFP Proxy — Game Porting
 
-Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from the template at `rtx_remix_tools/dx/remix-comp/`). It is a C++20 compatibility mod that intercepts `IDirect3DDevice9`, captures VS constant matrices (View/Projection/World) from `SetVertexShaderConstantF`, NULLs shaders on draw calls, applies matrices through `SetTransform`, and chain-loads RTX Remix.
+Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from the template at `rtx_remix_tools/dx/remix-comp/`). It is a d3d9.dll proxy that intercepts `IDirect3DDevice9`, captures VS constant matrices (View/Projection/World) from `SetVertexShaderConstantF`, NULLs shaders on draw calls, applies matrices through `SetTransform`, and chain-loads RTX Remix.
 
 **SKINNING IS OFF BY DEFAULT.** Do NOT enable skinning, modify skinning code, or discuss skinning infrastructure unless the user explicitly asks. When requested, read `src/comp/modules/skinning.hpp` and `src/comp/modules/skinning.cpp`.
 
@@ -23,26 +23,21 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/shared/common/ffp_state.cpp` | FFP state tracker -- engage/disengage, matrix transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP.Registers]`, `[Skinning]`, `[Diagnostics]`, `[Remix]` |
-| `premake5.lua` | Build system (Premake5 + VS2022) |
+| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `build.bat` | Build script: outputs d3d9.dll proxy |
 
 Per-game setup: copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/`, then edit `src/comp/` directly.
 
 ## Game-Specific Configuration
 
-The `remix-comp.ini` `[FFP.Registers]` section:
+The VS constant register layout is defined in `src/shared/common/ffp_state.hpp` as member defaults. Edit these when porting a new game, then rebuild:
 
-```ini
-[FFP.Registers]
-ViewStart=0
-ViewEnd=4
-ProjStart=4
-ProjEnd=8
-WorldStart=16
-WorldEnd=20
-BoneThreshold=20
-RegsPerBone=3
-BoneMinRegs=3
+```cpp
+int vs_reg_view_start_ = 0;    int vs_reg_view_end_ = 4;
+int vs_reg_proj_start_ = 4;    int vs_reg_proj_end_ = 8;
+int vs_reg_world_start_ = 16;  int vs_reg_world_end_ = 20;
+int vs_reg_bone_threshold_ = 20;
+int vs_regs_per_bone_ = 3;     int vs_bone_min_regs_ = 3;
 ```
 
 Other game-specific INI settings:
@@ -89,7 +84,7 @@ python -m livetools trace <call_addr> --count 50 \
 
 Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`). Edit files directly:
 
-1. Edit `remix-comp.ini` (at game root) with discovered register layout
+1. Edit register layout defaults in `src/shared/common/ffp_state.hpp`
 2. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME`
 3. Customize `src/comp/modules/renderer.cpp` and `src/comp/game/game.cpp`
 
@@ -100,7 +95,7 @@ cd patches/<GameName>
 build.bat release --name <GameName>
 ```
 
-Deploy: `.asi` + `remix-comp.ini` + `dinput8.dll` to game directory. Place `d3d9_remix.dll` there if using Remix.
+Deploy: `d3d9.dll` + `remix-comp.ini` to game directory. Place `d3d9_remix.dll` there if using Remix.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -112,7 +107,7 @@ The user must be in-game with geometry visible when captures are needed.
 
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
-| `remix-comp.ini` `[FFP.Registers]` | **YES** |
+| `ffp_state.hpp` register layout defaults | **YES** -- rebuild required |
 | `remix-comp.ini` `[FFP] AlbedoStage` | **YES** |
 | `remix-comp.ini` `[Skinning] Enabled` | **YES** (after rigid works) |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |

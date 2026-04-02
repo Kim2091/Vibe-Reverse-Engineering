@@ -13,8 +13,9 @@ These are infrastructure files. Use the summaries below instead of opening them.
 
 ### D3D9 passthrough proxy
 - `src/comp/modules/drawcall_mod_context.cpp` (~230 lines) — `drawcall_mod_context` save/restore method implementations. Never needs to be read; the API is in `renderer.hpp`.
-- `src/comp/modules/d3d9ex.cpp` (1084 lines) — `IDirect3DDevice9` wrapper. ~80 of 119 methods are trivial 1-line forwards. The ~12 methods with logic (Present, Reset, DrawPrimitive, DrawIndexedPrimitive, SetTexture, SetVertexDeclaration, SetVertexShader, SetPixelShader, SetVertexShaderConstantF, SetPixelShaderConstantF, SetStreamSource, BeginScene/EndScene) dispatch to renderer/ffp_state/imgui/tracer modules.
-- `src/comp/modules/d3d9ex.hpp` (205 lines) — D3D9Device and D3D9 class declarations.
+- `src/comp/modules/d3d9ex.cpp` (~1050 lines) — `IDirect3DDevice9` wrapper + exported `Direct3DCreate9`/`Direct3DCreate9Ex`. ~80 of 119 methods are trivial 1-line forwards. The ~12 methods with logic dispatch to renderer/ffp_state/imgui/tracer modules.
+- `src/comp/modules/d3d9ex.hpp` (~206 lines) — D3D9Device, _d3d9, and _d3d9ex wrapper class declarations.
+- `src/comp/d3d9_proxy.cpp` (~210 lines) + `d3d9_proxy.hpp` (~40 lines) — d3d9.dll proxy: loads real d3d9 chain (Remix bridge or system), DLL pre/post-load chains, forwarded D3DPERF/debug exports.
 
 ### Shared library (framework, never edited per-game)
 - `src/shared/utils/hooking.cpp` (754 lines) — MinHook wrapper + vtable patching.

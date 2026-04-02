@@ -4,7 +4,7 @@
 
 These directories are **templates** shared across all game projects. **NEVER modify them** unless the user explicitly asks to change the template itself:
 
-- `rtx_remix_tools/` — remix-comp framework, DX analysis scripts, ASI patcher tooling
+- `rtx_remix_tools/` — remix-comp framework (d3d9.dll proxy), DX analysis scripts
 - `retools/` — static analysis toolkit (decompiler, search, sigdb, etc.)
 - `livetools/` — Frida-based dynamic analysis
 - `graphics/` — DX9 tracer framework

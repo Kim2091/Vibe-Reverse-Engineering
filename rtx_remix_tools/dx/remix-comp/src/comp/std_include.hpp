@@ -35,7 +35,6 @@ constexpr auto COMP_MOD_VERSION_PATCH = 1;
 #include <d3dx9.h>
 #pragma warning(pop)
 
-#pragma comment(lib, "d3d9.lib")
 #pragma comment(lib, "d3dx9.lib")
 
 #define STATIC_ASSERT_SIZE(struct, size)				static_assert(sizeof(struct) == size, "Size check")

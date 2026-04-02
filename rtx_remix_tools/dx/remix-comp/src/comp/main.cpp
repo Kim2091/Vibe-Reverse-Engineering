@@ -2,9 +2,9 @@
 #include <psapi.h>
 
 #include "comp.hpp"
+#include "d3d9_proxy.hpp"
 #include "shared/common/flags.hpp"
 #include "shared/common/config.hpp"
-#include "modules/d3d9ex.hpp"
 
 namespace comp
 {
@@ -43,7 +43,6 @@ namespace comp
 
 	DWORD WINAPI find_game_window([[maybe_unused]] LPVOID lpParam)
 	{
-		shared::common::console();
 		std::uint32_t T = 0;
 
 		shared::common::log("Main", "Waiting for window with classname containing '" WINDOW_CLASS_NAME "' ...", shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
@@ -68,6 +67,9 @@ namespace comp
 			Beep(523, 100);
 		}
 
+		// Post-load DLLs (after window is found, game is running)
+		d3d9_proxy::load_postload_dlls();
+
 		comp::main();
 		return 0;
 	}
@@ -75,7 +77,7 @@ namespace comp
 
 BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 {
-	if (ul_reason_for_call == DLL_PROCESS_ATTACH) 
+	if (ul_reason_for_call == DLL_PROCESS_ATTACH)
 	{
 		shared::common::console();
 		shared::globals::setup_dll_module(hmodule);
@@ -86,11 +88,19 @@ BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 		std::cout << "Launching RTX Remix Comp [" << COMP_MOD_VERSION_MAJOR << "." << COMP_MOD_VERSION_MINOR << "." << COMP_MOD_VERSION_PATCH << "]\n";
 		std::cout << "> Compiled On : " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n";
 		std::cout << "> Based on xoxor4d/remix-comp-base\n";
-		std::cout << "> Adapted by kim2091 for Vibe Reverse Engineering\n\n";
+		std::cout << "> Adapted by kim2091 for Vibe Reverse Engineering\n";
+		std::cout << "> Running as d3d9.dll proxy\n\n";
 		shared::common::set_console_color_default();
 
 		// Load config from INI file next to the DLL
 		shared::common::config::get().load(shared::globals::root_path + "\\remix-comp.ini");
+
+		// Pre-load DLLs (before the d3d9 chain is established)
+		d3d9_proxy::load_preload_dlls();
+
+		// Load the real d3d9 chain (Remix bridge or system d3d9.dll)
+		if (!d3d9_proxy::init())
+			return TRUE;
 
 		if (const auto MH_INIT_STATUS = MH_Initialize(); MH_INIT_STATUS != MH_STATUS::MH_OK)
 		{
@@ -101,10 +111,7 @@ BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 		// Setup memory addresses (eg. patterns)
 		comp::game::init_game_addresses();
 
-		// Register d3d9 module to create a d3d9 proxy interface
-		shared::common::loader::module_loader::register_module(std::make_unique<comp::d3d9ex>());
-
-		// Find game window thread
+		// Find game window thread (registers modules once window is found)
 		if (const auto t = CreateThread(nullptr, 0, comp::find_game_window, nullptr, 0, nullptr); t) {
 			CloseHandle(t);
 		}

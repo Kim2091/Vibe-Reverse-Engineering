@@ -9,7 +9,6 @@ Port a DX9 shader-based game to fixed-function pipeline (FFP) for RTX Remix comp
 
 **NEVER MODIFY TEMPLATE CODE.** The following directories are read-only templates:
 - `rtx_remix_tools/dx/remix-comp/` — remix-comp framework template
-- `retools/asi_patcher.py` and `retools/asi_patcher/` — ASI patcher tooling
 
 To create a game patch, **copy** the template to `patches/<GameName>/` and edit the copy. If the user asks you to edit remix-comp code, always confirm whether they mean the template or a game-specific copy under `patches/`. Only modify the template if the user **explicitly** says to change the template itself.
 
@@ -28,7 +27,7 @@ CPU-side vertex skinning (manually multiplying vertices by bone matrices) is a *
 
 ## What remix-comp Does
 
-Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from `rtx_remix_tools/dx/remix-comp/`). It is a dinput8.dll ASI proxy that:
+Each game folder under `patches/<GameName>/` is a self-contained remix-comp project (copied from `rtx_remix_tools/dx/remix-comp/`). It is a d3d9.dll proxy that:
 
 1. Captures VS constants (View, Projection, World matrices) from `SetVertexShaderConstantF` via `ffp_state::on_set_vs_const_f`
 2. Parses `SetVertexDeclaration` via `ffp_state::on_set_vertex_declaration` to detect BLENDWEIGHT+BLENDINDICES (skinned), POSITIONT (screen-space), NORMAL presence, and per-element byte offsets
@@ -39,7 +38,7 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 4. Routes `DrawPrimitive` via `renderer::on_draw_primitive`: world-space (has decl, no POSITIONT, not skinned) -> FFP; otherwise pass-through
 5. Applies captured matrices via `ffp_state::apply_transforms` -> `SetTransform`
 6. Sets up texture stages and lighting for FFP rendering
-7. Chain-loads RTX Remix (`d3d9_remix.dll`) via d3d9ex module
+7. Loads the real d3d9 chain (RTX Remix `d3d9_remix.dll` or system d3d9) via d3d9_proxy
 
 ## Codebase File Map
 
@@ -50,9 +49,10 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/shared/common/ffp_state.cpp` | Core FFP state tracker -- engage/disengage, transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | FFP state class with all accessors |
 | `src/shared/common/config.hpp` | Config structure parsed from `remix-comp.ini` |
-| `src/comp/main.cpp` | DLL entry, window finder, config loading, module registration |
+| `src/comp/main.cpp` | DLL entry, d3d9 proxy init, window finder, config loading |
 | `src/comp/comp.cpp` | Module init: registers renderer, diagnostics, skinning, imgui |
-| `src/comp/modules/d3d9ex.cpp` | `IDirect3DDevice9` / `IDirect3D9` wrapper -- intercepts all 119 methods |
+| `src/comp/d3d9_proxy.cpp` | Loads real d3d9 chain, DLL pre/post-load, forwarded exports |
+| `src/comp/modules/d3d9ex.cpp` | `IDirect3DDevice9` / `IDirect3D9` wrapper + exported Direct3DCreate9 |
 | `src/comp/modules/d3d9ex.hpp` | D3D9 wrapper class declarations |
 | `src/comp/modules/diagnostics.cpp` | 50-sec delay, 3-frame diagnostic log to `rtx_comp/diagnostics.log` |
 | `src/comp/modules/skinning.cpp` | Optional skinning module (vertex expansion + bone upload) |
@@ -60,8 +60,8 @@ Each game folder under `patches/<GameName>/` is a self-contained remix-comp proj
 | `src/comp/modules/imgui.cpp` | ImGui debug overlay (F4) with FFP tab |
 | `src/comp/game/game.cpp` | Per-game address init (patterns, hooks) |
 | `src/comp/game/game.hpp` | Per-game variables and function typedefs |
-| `remix-comp.ini` | Runtime config: register layout, albedo stage, skinning toggle, diagnostics |
-| `build.bat` | Build script: `build.bat [release\|debug] [--name Name]` |
+| `remix-comp.ini` | Runtime config: albedo stage, skinning toggle, diagnostics, DLL chain |
+| `build.bat` | Build script: outputs d3d9.dll proxy. `build.bat [release\|debug] [--name Name]` |
 
 **`rtx_remix_tools/dx/remix-comp/` is the TEMPLATE.** Each game gets a full copy under `patches/<GameName>/` — the entire folder is self-contained and can be distributed as a standalone repo. Edit `src/comp/` directly in the game's copy.
 
@@ -148,7 +148,7 @@ python -m graphics.directx.dx9.tracer analyze <JSONL> --shader-map
 
 1. Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`)
 2. Edit `src/comp/` directly in the game's copy — this is the per-game customization layer
-3. Edit `remix-comp.ini` (at the game root) with discovered register layout (see INI Config section below)
+3. Edit register layout defaults in `src/shared/common/ffp_state.hpp` (see Register Layout section below)
 4. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
 5. Customize `src/comp/modules/renderer.cpp` draw routing if needed (see Decision Trees below)
 6. Customize `src/comp/game/game.cpp` with game-specific address init if hooks are needed
@@ -164,9 +164,8 @@ cd patches/<GameName>
 build.bat release --name <GameName>
 ```
 
-The build produces `<GameName>-comp.asi` and `dinput8.dll` in `patches/<GameName>/build/bin/release/`. Deploy:
-- `<GameName>-comp.asi` to the game directory (or `plugins/` subfolder)
-- `dinput8.dll` to the game directory (copied automatically by build)
+The build produces `d3d9.dll` in `patches/<GameName>/build/bin/release/`. Deploy:
+- `d3d9.dll` to the game directory (the game loads this as its d3d9 proxy)
 - `remix-comp.ini` to the game directory
 - `d3d9_remix.dll` to the game directory if using Remix
 
@@ -188,30 +187,34 @@ Do not change the logging delay unless the user asks -- it ensures the user gets
 
 ---
 
+## Register Layout (`ffp_state.hpp`)
+
+The VS constant register layout is defined as member defaults in `src/shared/common/ffp_state.hpp`. Edit these when porting a new game:
+
+```cpp
+// In ffp_state.hpp — private members with game-specific defaults
+int vs_reg_view_start_ = 0;
+int vs_reg_view_end_ = 4;
+int vs_reg_proj_start_ = 4;
+int vs_reg_proj_end_ = 8;
+int vs_reg_world_start_ = 16;
+int vs_reg_world_end_ = 20;
+int vs_reg_bone_threshold_ = 20;  // only matters when [Skinning] Enabled=1
+int vs_regs_per_bone_ = 3;
+int vs_bone_min_regs_ = 3;
+```
+
+Each matrix occupies 4 consecutive vec4 registers (= 16 floats). After changing defaults, rebuild with `build.bat`.
+
 ## INI Config (`remix-comp.ini`)
 
-All game-specific tuning is in `remix-comp.ini` -- no recompile needed for register changes.
+Runtime settings that don't require recompile:
 
 ```ini
 [FFP]
 Enabled=1
 AlbedoStage=0
 ; Albedo texture stage (0-7). Set to whichever stage the game binds the diffuse texture.
-
-[FFP.Registers]
-ViewStart=0
-ViewEnd=4
-ProjStart=4
-ProjEnd=8
-WorldStart=16
-WorldEnd=20
-; These map VS constant registers to View, Projection, and World matrices.
-; Each matrix occupies 4 consecutive vec4 registers (= 16 floats).
-
-; Bone defines below only matter when [Skinning] Enabled=1
-BoneThreshold=20
-RegsPerBone=3
-BoneMinRegs=3
 
 [Skinning]
 Enabled=0
@@ -227,8 +230,10 @@ Enabled=1
 DLLName=d3d9_remix.dll
 
 [Chain]
-PreloadDLL=
-; Optional: chain-load another DLL before initialization.
+PreLoad=
+PostLoad=
+; Semicolon-separated DLLs/ASIs to load before/after the d3d9 chain.
+; Example: PreLoad=patch.dll;fix.asi
 ```
 
 ---
@@ -239,7 +244,8 @@ Each game folder under `patches/<GameName>/` is a **self-contained** copy of the
 
 | Component (in `patches/<GameName>/`) | Edit Per-Game? |
 |-----------|----------------|
-| `remix-comp.ini` register layout, albedo stage | **YES** |
+| `ffp_state.hpp` register layout defaults | **YES** — rebuild after changing |
+| `remix-comp.ini` albedo stage, diagnostics, chain | **YES** |
 | `src/comp/main.cpp` WINDOW_CLASS_NAME | **YES** |
 | `src/comp/modules/renderer.cpp` draw routing | **YES** -- main draw routing |
 | `src/comp/game/game.cpp` address init and hooks | **YES** -- per-game hooks |
@@ -292,5 +298,5 @@ AND !ffp.cur_decl_has_pos_t() AND !ffp.cur_decl_is_skinned()?
 - **Skinned meshes invisible**: Set `[Skinning] Enabled=1` in `remix-comp.ini`. Check log for skinning errors. Verify `bone_start_reg` and `num_bones` are non-zero in the log.
 - **Game crashes on startup**: Set `[Remix] Enabled=0` in `remix-comp.ini` to test without Remix. Check `WINDOW_CLASS_NAME` in `comp/main.cpp`.
 - **Geometry at origin / piled up**: World matrix register mapping wrong. Re-examine VS constant writes via `livetools trace` or DX9 tracer `--const-provenance`.
-- **World geometry shifts after skinned draws**: `WORLDMATRIX(0)` clobbered by bone[0]. The proxy tracks `world_dirty_` for re-application. If still broken, check for bone register overlap with world matrix range in `remix-comp.ini`.
+- **World geometry shifts after skinned draws**: `WORLDMATRIX(0)` clobbered by bone[0]. The proxy tracks `world_dirty_` for re-application. If still broken, check for bone register overlap with world matrix range in `ffp_state.hpp`.
 - **ImGui overlay not appearing**: Press F4. Check that `WINDOW_CLASS_NAME` is correct and the window was found (console output). Check for DirectInput hook conflicts.

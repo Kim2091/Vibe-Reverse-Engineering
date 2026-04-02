@@ -50,7 +50,8 @@ namespace shared::common
 		remix.dll_name = get_string("Remix", "DLLName", "d3d9_remix.dll");
 
 		// [Chain]
-		chain.preload_dll = get_string("Chain", "PreloadDLL", "");
+		chain.preload = get_string("Chain", "PreLoad", "");
+		chain.postload = get_string("Chain", "PostLoad", "");
 
 		// [FFP]
 		ffp.enabled = get_bool("FFP", "Enabled", true);

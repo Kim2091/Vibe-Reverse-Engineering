@@ -42,10 +42,10 @@ The codebase (`rtx_remix_tools/dx/remix-comp/`) is a C++20 compatibility mod bas
 | `src/shared/common/ffp_state.cpp` | FFP state tracker -- engage/disengage, matrix transforms, texture stages |
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP.Registers]`, `[Skinning]`, `[Diagnostics]`, `[Remix]` |
-| `premake5.lua` | Build system (Premake5 + VS2022) |
+| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `build.bat` | Build script: outputs d3d9.dll proxy |
 
-Per-game copies: copy `src/comp/` to `patches/<GameName>/proxy/comp/`, use Premake template.
+Per-game setup: copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/`, then edit `src/comp/` directly.
 
 ---
 
@@ -114,21 +114,22 @@ Captures: startRegister, Vector4fCount, and the first 4 vec4 constants of actual
 
 ### Step 3: Copy comp/ and Configure
 
-1. Copy `rtx_remix_tools/dx/remix-comp/src/comp/` to `patches/<GameName>/proxy/comp/`
-2. Copy `remix-comp.ini` from `assets/` to `patches/<GameName>/proxy/`
-3. Edit `remix-comp.ini` `[FFP.Registers]` section with discovered register values
-4. Use the Premake5 template (`premake5_game.lua.template`) for the game-specific build
+Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`). The game folder is now self-contained. Edit files directly:
+
+1. Edit register layout defaults in `src/shared/common/ffp_state.hpp`
+2. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
+3. Customize `src/comp/modules/renderer.cpp` draw routing if needed
+4. Customize `src/comp/game/game.cpp` with game-specific hooks
 5. Update `kb.h` with discovered function signatures, structs, and globals
 
 ### Step 4: Build and Deploy
 
 ```bash
-cd patches/<GameName>/proxy
-premake5 vs2022
-# Build with Visual Studio or MSBuild
+cd patches/<GameName>
+build.bat release --name <GameName>
 ```
 
-Deploy to game directory: `.asi` file + `remix-comp.ini` + `dinput8.dll` (Ultimate ASI Loader). Place `d3d9_remix.dll` there too if using Remix.
+Deploy to game directory: `d3d9.dll` + `remix-comp.ini`. Place `d3d9_remix.dll` there if using Remix.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -149,19 +150,14 @@ Do not change the logging delay unless the user asks -- it ensures the user gets
 
 ## Game-Specific Configuration
 
-The `remix-comp.ini` `[FFP.Registers]` section:
+The VS constant register layout is defined in `src/shared/common/ffp_state.hpp` as member defaults. Edit these when porting, then rebuild:
 
-```ini
-[FFP.Registers]
-ViewStart=0
-ViewEnd=4
-ProjStart=4
-ProjEnd=8
-WorldStart=16
-WorldEnd=20
-BoneThreshold=20
-RegsPerBone=3
-BoneMinRegs=3
+```cpp
+int vs_reg_view_start_ = 0;    int vs_reg_view_end_ = 4;
+int vs_reg_proj_start_ = 4;    int vs_reg_proj_end_ = 8;
+int vs_reg_world_start_ = 16;  int vs_reg_world_end_ = 20;
+int vs_reg_bone_threshold_ = 20;
+int vs_regs_per_bone_ = 3;     int vs_bone_min_regs_ = 3;
 ```
 
 Other game-specific INI settings:
@@ -175,7 +171,7 @@ Other game-specific INI settings:
 
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
-| `remix-comp.ini` `[FFP.Registers]` | **YES** |
+| `ffp_state.hpp` register layout defaults | **YES** |
 | `remix-comp.ini` `[FFP] AlbedoStage` | **YES** |
 | `remix-comp.ini` `[Skinning] Enabled` | **YES** (after rigid works) |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |

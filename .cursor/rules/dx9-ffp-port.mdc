@@ -46,26 +46,21 @@ Each game's remix-comp folder is a C++20 compatibility mod based on remix-comp-b
 | `src/shared/common/ffp_state.hpp` | `ffp_state` class with all state accessors |
 | `src/shared/common/config.cpp` | INI config parser for `remix-comp.ini` |
 | `src/shared/common/config.hpp` | Config structures: `ffp_settings`, `skinning_settings`, etc. |
-| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP.Registers]`, `[Skinning]`, `[Diagnostics]`, `[Remix]` |
-| `premake5.lua` | Build system (Premake5 + VS2022) |
+| `remix-comp.ini` (in `assets/`) | Runtime config: `[FFP]`, `[Skinning]`, `[Diagnostics]`, `[Remix]`, `[Chain]` |
+| `build.bat` | Build script: outputs d3d9.dll proxy |
 
-The codebase is C++20, uses Premake5 for build generation, component module system for extensibility.
+The codebase is C++20 with a `build.bat` build script, component module system for extensibility.
 
 ## What Needs to Change Per Game
 
-The `remix-comp.ini` file has a `[FFP.Registers]` section that must be set based on RE findings:
+The VS constant register layout is defined in `src/shared/common/ffp_state.hpp` as member defaults. Edit these when porting, then rebuild:
 
-```ini
-[FFP.Registers]
-ViewStart=0
-ViewEnd=4
-ProjStart=4
-ProjEnd=8
-WorldStart=16
-WorldEnd=20
-BoneThreshold=20
-RegsPerBone=3
-BoneMinRegs=3
+```cpp
+int vs_reg_view_start_ = 0;    int vs_reg_view_end_ = 4;
+int vs_reg_proj_start_ = 4;    int vs_reg_proj_end_ = 8;
+int vs_reg_world_start_ = 16;  int vs_reg_world_end_ = 20;
+int vs_reg_bone_threshold_ = 20;
+int vs_regs_per_bone_ = 3;     int vs_bone_min_regs_ = 3;
 ```
 
 Beyond the INI config, users may need to modify:
@@ -139,7 +134,7 @@ This captures: startRegister, Vector4fCount, and the actual float data (first 4 
 
 Copy the entire `rtx_remix_tools/dx/remix-comp/` folder to `patches/<GameName>/` (excluding `build/`). The game folder is now self-contained. Edit files directly:
 
-1. Edit `remix-comp.ini` (at the game root) with discovered register layout
+1. Edit register layout defaults in `src/shared/common/ffp_state.hpp`
 2. Edit `src/comp/main.cpp`: set `WINDOW_CLASS_NAME` to the game's window class
 3. Customize `src/comp/modules/renderer.cpp` draw routing if needed
 4. Customize `src/comp/game/game.cpp` with game-specific hooks
@@ -152,7 +147,7 @@ cd patches/<GameName>
 build.bat release --name <GameName>
 ```
 
-The build produces `<GameName>-comp.asi` in `build/bin/release/`. Deploy to game directory: `.asi` file + `remix-comp.ini` + `dinput8.dll` (Ultimate ASI Loader). If using Remix, also place `d3d9_remix.dll` there.
+Deploy to game directory: `d3d9.dll` + `remix-comp.ini`. If using Remix, also place `d3d9_remix.dll` there.
 
 ### Step 5: Diagnose with Log and ImGui
 
@@ -175,7 +170,7 @@ Use this to iterate: wrong matrices -> re-check register mapping. Missing textur
 
 | File / Section | Edit Per-Game? |
 |----------------|----------------|
-| `remix-comp.ini` `[FFP.Registers]` | **YES** -- set register layout |
+| `ffp_state.hpp` register layout defaults | **YES** -- set register layout |
 | `remix-comp.ini` `[Skinning] Enabled=` | **YES** -- only after rigid FFP works |
 | `remix-comp.ini` `[FFP] AlbedoStage=` | **YES** -- set albedo texture stage |
 | `renderer.cpp` `on_draw_indexed_prim()` | **YES** -- main draw routing |
