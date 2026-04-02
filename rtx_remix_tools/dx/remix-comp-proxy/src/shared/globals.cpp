@@ -40,8 +40,8 @@ namespace shared::globals
 	}
 
 	void setup_homepath()
-	{	// init filepath var
-		char path[MAX_PATH]; GetModuleFileNameA(nullptr, path, MAX_PATH);
+	{
+		char path[MAX_PATH]; GetModuleFileNameA(dll_hmodule, path, MAX_PATH);
 		root_path = std::filesystem::path(path).parent_path().string();
 	}
 

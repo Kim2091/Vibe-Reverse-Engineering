@@ -12,6 +12,17 @@ namespace shared::common
 	void config::load(const std::string& path)
 	{
 		ini_path_ = path;
+
+		// Check if the INI file actually exists — GetPrivateProfileInt silently
+		// returns defaults for missing files, making it look like settings are ignored.
+		if (GetFileAttributesA(ini_path_.c_str()) == INVALID_FILE_ATTRIBUTES)
+		{
+			log("Config", std::format("INI NOT FOUND: {} — using all defaults!", ini_path_),
+				LOG_TYPE::LOG_TYPE_ERROR, true);
+			loaded_ = false;
+			return;
+		}
+
 		loaded_ = true;
 		parse_all();
 	}
