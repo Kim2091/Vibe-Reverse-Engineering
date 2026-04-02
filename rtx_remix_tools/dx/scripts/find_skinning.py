@@ -187,14 +187,20 @@ def scan_fvf_skinning(data, sections, image_base, text_data, text_va):
 
     skinned_fvfs = []
     for va, _ in sites:
-        pushes = analyze_pushes(data, sections, image_base, va if isinstance(va, int) else va)
-        for _, val, _ in pushes:
-            pos_type = val & 0x00E
-            if pos_type in (0x006, 0x008, 0x00A, 0x00C, 0x00E):
-                blend_count = FVF_BLEND_COUNTS.get(pos_type, 0)
-                if blend_count > 0:
-                    indexed = bool(val & 0x1000)  # D3DFVF_LASTBETA_UBYTE4
-                    skinned_fvfs.append((va, val, blend_count, indexed))
+        pushes = analyze_pushes(data, sections, image_base, va)
+        if not pushes:
+            continue
+        # SetFVF(device, FVF) — FVF is the last push
+        val = pushes[-1][1]
+        # FVF codes are bitfields; anything > 0xFFFFF is likely an address
+        if val > 0xFFFFF:
+            continue
+        pos_type = val & 0x00E
+        if pos_type in (0x006, 0x008, 0x00A, 0x00C, 0x00E):
+            blend_count = FVF_BLEND_COUNTS.get(pos_type, 0)
+            if blend_count > 0:
+                indexed = bool(val & 0x1000)  # D3DFVF_LASTBETA_UBYTE4
+                skinned_fvfs.append((va, val, blend_count, indexed))
     return skinned_fvfs
 
 
@@ -278,18 +284,25 @@ def find_vertex_blend_states(data, sections, image_base, text_data, text_va):
 # ── SetTransform(WORLDMATRIX(n)) detection ──────────────────────────
 
 def find_worldmatrix_transforms(data, sections, image_base, text_data, text_va):
-    """Find SetTransform calls with WORLDMATRIX(n) arguments (>= 256)."""
+    """Find SetTransform calls with WORLDMATRIX(n) arguments (>= 256).
+
+    WORLDMATRIX(n) = 256 + n. Realistic bone indices are 0..255, so
+    valid transform type values are 256..511.
+    """
     sites = scan_vtable_calls(text_data, text_va, 0xB0)  # SetTransform
     sites += [(va, 'indirect') for va, _ in scan_vtable_mov(text_data, text_va, 0xB0)]
 
     wm_calls = []
     for va, _ in sites:
         pushes = analyze_pushes(data, sections, image_base, va, window=40)
-        if len(pushes) < 1:
+        if not pushes:
             continue
-        for _, val, _ in pushes:
-            if val >= 256:
-                wm_calls.append((va, val))
+        # SetTransform(State, pMatrix) — pMatrix is usually a register push
+        # (not captured), so scan all pushes for a WORLDMATRIX range value.
+        for _, pval, _ in pushes:
+            if 256 <= pval <= 511:
+                wm_calls.append((va, pval))
+                break
     return wm_calls
 
 
@@ -476,14 +489,19 @@ def main():
         print(f"  SetTransform(WORLDMATRIX(n)): not found")
 
     has_ffp_blend = bool(vb_states) or bool(wm_calls)
-    if not has_ffp_blend and not skinned_decls and not fvf_skinned:
+    has_fvf_blend = bool(fvf_skinned)
+    if not has_ffp_blend and not skinned_decls and not has_fvf_blend and not palettes:
         blend_method = "none detected"
-    elif palettes and not has_ffp_blend:
+    elif palettes and not has_ffp_blend and not has_fvf_blend:
         blend_method = "VS-based skinning (bone palette via VS constants)"
     elif has_ffp_blend and not palettes:
         blend_method = "FFP indexed vertex blending (SetTransform WORLDMATRIX)"
     elif has_ffp_blend and palettes:
         blend_method = "hybrid (both VS constants and FFP WORLDMATRIX)"
+    elif has_fvf_blend:
+        blend_method = "FFP vertex blending via FVF (blend states may be set dynamically)"
+    elif skinned_decls and palettes:
+        blend_method = "VS-based skinning (bone palette via VS constants)"
     else:
         blend_method = "skinned declarations found, method unclear"
 

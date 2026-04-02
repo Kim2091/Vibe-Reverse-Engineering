@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dx9_common import (
     load_binary, load_text_section, print_header,
     scan_vtable_calls, scan_vtable_mov, analyze_pushes,
-    D3DRS, decode_rs_value, decode_transform_type,
+    decode_transform_type,
 )
 
 
@@ -106,9 +106,14 @@ def main():
     wm_calls = []
     for va, _ in xform_sites:
         pushes = analyze_pushes(data, sections, image_base, va, window=40)
-        for _, val, _ in pushes:
-            if val >= 256:
-                wm_calls.append((va, val))
+        if not pushes:
+            continue
+        # SetTransform(State, pMatrix) — pMatrix is usually a register push
+        # (not captured), so scan all pushes for a WORLDMATRIX range value.
+        for _, pval, _ in pushes:
+            if 256 <= pval <= 511:
+                wm_calls.append((va, pval))
+                break
 
     if wm_calls:
         indices = sorted(set(v - 256 for _, v in wm_calls))
