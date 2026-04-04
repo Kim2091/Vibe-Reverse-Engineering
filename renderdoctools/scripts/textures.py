@@ -73,29 +73,45 @@ def save_texture(rid, filepath, fmt="png"):
 textures = []
 seen = set()
 
+def _find_action(eid):
+    """Find action by event ID, searching children recursively."""
+    def _search(action):
+        cur = action
+        while cur is not None:
+            if cur.eventId == eid:
+                return cur
+            for child in cur.children:
+                found = _search(child)
+                if found is not None:
+                    return found
+            cur = cur.next
+        return None
+    for root in _controller.GetRootActions():
+        found = _search(root)
+        if found is not None:
+            return found
+    return None
+
 # From render targets
-for root_action in _controller.GetRootActions():
-    cur = root_action
-    while cur is not None:
-        if cur.eventId == event_id:
-            for o in cur.outputs:
-                if o != rd.ResourceId.Null() and int(o) not in seen:
-                    seen.add(int(o))
-                    info = get_texture_info(o)
-                    if info:
-                        info["binding"] = "renderTarget"
-                        textures.append(info)
-            if cur.depthOut != rd.ResourceId.Null() and int(cur.depthOut) not in seen:
-                seen.add(int(cur.depthOut))
-                info = get_texture_info(cur.depthOut)
-                if info:
-                    info["binding"] = "depthTarget"
-                    textures.append(info)
-            break
-        cur = cur.next
+action = _find_action(event_id)
+if action is not None:
+    for o in action.outputs:
+        if o != rd.ResourceId.Null() and int(o) not in seen:
+            seen.add(int(o))
+            info = get_texture_info(o)
+            if info:
+                info["binding"] = "renderTarget"
+                textures.append(info)
+    if action.depthOut != rd.ResourceId.Null() and int(action.depthOut) not in seen:
+        seen.add(int(action.depthOut))
+        info = get_texture_info(action.depthOut)
+        if info:
+            info["binding"] = "depthTarget"
+            textures.append(info)
 
 # From shader SRVs
-for stage_name, stage_enum in [("vertex", rd.ShaderStage.Vertex), ("pixel", rd.ShaderStage.Pixel),
+for stage_name, stage_enum in [("vertex", rd.ShaderStage.Vertex), ("hull", rd.ShaderStage.Hull),
+                                ("domain", rd.ShaderStage.Domain), ("pixel", rd.ShaderStage.Pixel),
                                 ("geometry", rd.ShaderStage.Geometry), ("compute", rd.ShaderStage.Compute)]:
     refl = state.GetShaderReflection(stage_enum)
     if refl is None:

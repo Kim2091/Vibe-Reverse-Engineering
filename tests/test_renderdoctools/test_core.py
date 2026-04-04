@@ -30,6 +30,26 @@ class TestFindRenderdoc:
             with pytest.raises(FileNotFoundError, match="RenderDoc not found"):
                 core.find_renderdoc()
 
+    def test_finds_versioned_renderdoc(self, tmp_path):
+        """find_renderdoc() finds RenderDoc in versioned directory names."""
+        rd_dir = tmp_path / "tools" / "RenderDoc_1.43_64"
+        rd_dir.mkdir(parents=True)
+        (rd_dir / "qrenderdoc.exe").touch()
+
+        with patch.object(core, "WORKSPACE_ROOT", tmp_path):
+            result = core.find_renderdoc()
+            assert result == rd_dir / "qrenderdoc.exe"
+
+    def test_finds_any_renderdoc_prefix(self, tmp_path):
+        """find_renderdoc() falls back to any renderdoc* directory."""
+        rd_dir = tmp_path / "tools" / "RenderDoc_2.0_64"
+        rd_dir.mkdir(parents=True)
+        (rd_dir / "qrenderdoc.exe").touch()
+
+        with patch.object(core, "WORKSPACE_ROOT", tmp_path):
+            result = core.find_renderdoc()
+            assert result == rd_dir / "qrenderdoc.exe"
+
 
 class TestRunScript:
     def test_generates_script_and_parses_json(self, tmp_path):
@@ -55,3 +75,19 @@ class TestRunScript:
                     config={"draws_only": False},
                 )
                 assert result == output_data
+
+    def test_missing_script_raises(self, tmp_path):
+        """run_script() raises FileNotFoundError for unknown script names."""
+        with patch.object(core, "find_renderdoc", return_value=tmp_path / "qrenderdoc.exe"):
+            with pytest.raises(FileNotFoundError, match="Script template not found"):
+                core.run_script("nonexistent_script", str(tmp_path / "test.rdc"))
+
+    def test_no_output_raises_runtime_error(self, tmp_path):
+        """run_script() raises RuntimeError when script produces no output."""
+        def fake_run(cmd, **kwargs):
+            return MagicMock(returncode=1, stderr="something went wrong")
+
+        with patch.object(core, "find_renderdoc", return_value=tmp_path / "qrenderdoc.exe"):
+            with patch("subprocess.run", side_effect=fake_run):
+                with pytest.raises(RuntimeError, match="failed"):
+                    core.run_script("events", str(tmp_path / "test.rdc"))

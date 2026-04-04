@@ -8,6 +8,16 @@ zero_samples = _cfg.get("zero_samples", False)
 counters = _controller.EnumerateCounters()
 sf = _controller.GetStructuredFile()
 
+def _collect_all_actions():
+    result = {}
+    def _walk(d):
+        result[d.eventId] = d
+        for c in d.children:
+            _walk(c)
+    for a in _controller.GetRootActions():
+        _walk(a)
+    return result
+
 if not fetch_name and not zero_samples:
     counter_list = []
     for c in counters:
@@ -29,13 +39,7 @@ elif zero_samples:
     results = _controller.FetchCounters([rd.GPUCounter.SamplesPassed])
     desc = _controller.DescribeCounter(rd.GPUCounter.SamplesPassed)
 
-    actions = {}
-    def collect_actions(d):
-        actions[d.eventId] = d
-        for c in d.children:
-            collect_actions(c)
-    for a in _controller.GetRootActions():
-        collect_actions(a)
+    actions = _collect_all_actions()
 
     zero_draws = []
     for r in results:
@@ -68,13 +72,7 @@ else:
     results = _controller.FetchCounters([target_counter])
     desc = _controller.DescribeCounter(target_counter)
 
-    actions = {}
-    def collect_actions2(d):
-        actions[d.eventId] = d
-        for c in d.children:
-            collect_actions2(c)
-    for a in _controller.GetRootActions():
-        collect_actions2(a)
+    actions = _collect_all_actions()
 
     entries = []
     for r in results:

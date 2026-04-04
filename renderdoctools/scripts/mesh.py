@@ -74,11 +74,37 @@ if post_vs:
     postvs = _controller.GetPostVSData(0, 0, rd.MeshDataStage.VSOut)
     vs_refl = state.GetShaderReflection(rd.ShaderStage.Vertex)
     if vs_refl:
+        attrs = []
         for attr in vs_refl.outputSignature:
-            mesh_data["attributes"].append({
-                "name": attr.semanticIdxName if attr.varName == "" else attr.varName,
+            name = attr.semanticIdxName if attr.varName == "" else attr.varName
+            attrs.append({
+                "name": name,
                 "compCount": attr.compCount,
             })
+        mesh_data["attributes"] = attrs
+
+        if postvs.numIndices > 0:
+            data = _controller.GetBufferData(postvs.vertexResourceId, postvs.vertexByteOffset, 0)
+            stride = postvs.vertexByteStride
+            num_verts = min(postvs.numIndices, end_idx)
+
+            for i in range(start_idx, num_verts):
+                vert = {"index": i}
+                offset = i * stride
+                attr_offset = 0
+                for attr in vs_refl.outputSignature:
+                    name = attr.semanticIdxName if attr.varName == "" else attr.varName
+                    comp_count = attr.compCount
+                    byte_size = comp_count * 4
+                    try:
+                        vals = struct.unpack_from("%df" % comp_count, data, offset + attr_offset)
+                        vert[name] = list(vals)
+                    except struct.error:
+                        pass
+                    attr_offset += byte_size
+                mesh_data["vertices"].append(vert)
+                if len(mesh_data["vertices"]) >= max_verts:
+                    break
 else:
     ib = state.GetIBuffer()
     vbs = state.GetVBuffers()

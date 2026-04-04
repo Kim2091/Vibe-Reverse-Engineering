@@ -69,14 +69,29 @@ for stage_name, stage_enum in STAGES:
 
     pipeline["stages"][stage_name] = stage_info
 
+def _find_action(eid):
+    """Find action by event ID, searching children recursively."""
+    def _search(action):
+        cur = action
+        while cur is not None:
+            if cur.eventId == eid:
+                return cur
+            for child in cur.children:
+                found = _search(child)
+                if found is not None:
+                    return found
+            cur = cur.next
+        return None
+    for root in _controller.GetRootActions():
+        found = _search(root)
+        if found is not None:
+            return found
+    return None
+
 # Render targets
-action = _controller.GetRootActions()[0]
-cur = action
-while cur is not None:
-    if cur.eventId == event_id:
-        action = cur
-        break
-    cur = cur.next
+action = _find_action(event_id)
+if action is None:
+    action = _controller.GetRootActions()[0]
 
 outputs = []
 for o in action.outputs:

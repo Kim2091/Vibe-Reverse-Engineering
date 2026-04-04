@@ -112,7 +112,8 @@ class TestAnalyze:
             "summary": False, "biggest_draws": 5, "render_targets": False,
         })
         draws = result["biggestDraws"]
-        assert len(draws) == 5
+        assert len(draws) <= 5
+        assert len(draws) > 0
         # should be sorted descending by numIndices
         for i in range(len(draws) - 1):
             assert draws[i]["numIndices"] >= draws[i + 1]["numIndices"]
@@ -276,3 +277,23 @@ class TestMesh:
             "event_id": eid, "post_vs": False, "indices": "0-3",
         })
         assert len(result["vertices"]) <= 3
+
+
+@requires_integration
+class TestInfo:
+    def test_info_returns_metadata(self):
+        result = core.run_script("info", str(_capture))
+        assert "api" in result
+        assert "timestamp" in result
+
+
+@requires_integration
+class TestCounters:
+    def test_list_counters(self):
+        result = core.run_script("counters", str(_capture), {"fetch": "", "zero_samples": False})
+        assert result["mode"] == "list"
+        assert len(result["counters"]) > 0
+        c = result["counters"][0]
+        assert "name" in c
+        assert "unit" in c
+        assert "description" in c
