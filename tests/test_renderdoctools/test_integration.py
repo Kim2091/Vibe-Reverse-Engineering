@@ -20,11 +20,11 @@ from renderdoctools import core
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
-CAPTURE_DIR = Path(r"D:\SteamLibrary\steamapps\common\Fallout 4\renderdoc_caps")
+CAPTURE_DIR = Path(__file__).resolve().parent.parent / "test_rdc"
 
 
 def _find_capture() -> Path | None:
-    """Find an .rdc capture to test against."""
+    """Find an .rdc capture in tests/test_rdc/."""
     if not CAPTURE_DIR.is_dir():
         return None
     for f in CAPTURE_DIR.iterdir():
