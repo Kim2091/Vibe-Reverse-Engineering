@@ -23,6 +23,9 @@ GPU counters:
 Analysis:
     python -m renderdoctools analyze <capture.rdc> [--summary] [--biggest-draws N]
 
+Capture info:
+    python -m renderdoctools info <capture.rdc>
+
 Utilities:
     python -m renderdoctools open <capture.rdc>
     python -m renderdoctools capture <exe> [--output FILE]
@@ -183,6 +186,136 @@ def cmd_shaders(args: argparse.Namespace) -> None:
                         print("    %s: [%s]" % (v["name"], vals))
 
 
+def cmd_mesh(args: argparse.Namespace) -> None:
+    config = {
+        "event_id": args.event,
+        "post_vs": args.post_vs,
+        "indices": args.indices or "",
+    }
+    result = core.run_script("mesh", args.capture, config)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    if "error" in result:
+        print("[error] %s" % result["error"], file=sys.stderr)
+        sys.exit(1)
+
+    mode = "Post-VS" if result["post_vs"] else "Input"
+    print("=== Mesh %s @ EID %d ===" % (mode, result["event_id"]))
+    print("Attributes: %s" % ", ".join(a["name"] for a in result["attributes"]))
+    print("")
+
+    for vert in result.get("vertices", []):
+        parts = ["idx=%d" % vert["index"]]
+        for a in result["attributes"]:
+            val = vert.get(a["name"])
+            if val:
+                parts.append("%s=%s" % (a["name"], val))
+        print("  ".join(parts))
+
+
+def cmd_counters(args: argparse.Namespace) -> None:
+    config = {
+        "fetch": args.fetch or "",
+        "zero_samples": args.zero_samples,
+    }
+    result = core.run_script("counters", args.capture, config)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    if "error" in result:
+        print("[error] %s" % result["error"], file=sys.stderr)
+        sys.exit(1)
+
+    mode = result["mode"]
+    if mode == "list":
+        print("=== %d GPU Counters ===" % len(result["counters"]))
+        for c in result["counters"]:
+            print("  %s (%s) -- %s" % (c["name"], c["unit"], c["description"][:60]))
+    elif mode == "zero_samples":
+        print("=== %d draws with 0 samples passed ===" % result["total"])
+        for d in result["draws"]:
+            print("  EID %d: %s (indices=%d)" % (d["eid"], d["name"], d["numIndices"]))
+    elif mode == "fetch":
+        print("=== %s (%s) ===" % (result["counter"], result["unit"]))
+        for r in result["results"]:
+            print("  EID %d: %s = %d" % (r["eid"], r["name"][:40], r["value"]))
+
+
+def cmd_analyze(args: argparse.Namespace) -> None:
+    config = {
+        "summary": args.summary,
+        "biggest_draws": args.biggest_draws or 0,
+        "render_targets": args.render_targets,
+    }
+    result = core.run_script("analyze", args.capture, config)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    if "error" in result:
+        print("[error] %s" % result["error"], file=sys.stderr)
+        sys.exit(1)
+
+    if "summary" in result:
+        s = result["summary"]
+        print("=== Capture Summary ===")
+        print("  Events:    %d" % s["totalEvents"])
+        print("  Draws:     %d" % s["totalDraws"])
+        print("  Clears:    %d" % s["totalClears"])
+        print("  Indices:   %d" % s["totalIndices"])
+        print("  Instances: %d" % s["totalInstances"])
+
+    if "biggestDraws" in result:
+        print("\n=== Top %d Draws by Index Count ===" % len(result["biggestDraws"]))
+        for d in result["biggestDraws"]:
+            print("  EID %d: %s (indices=%d, instances=%d)" % (
+                d["eid"], d["name"], d["numIndices"], d["numInstances"]))
+
+    if "renderTargets" in result:
+        print("\n=== Render Targets ===")
+        for rt in result["renderTargets"]:
+            print("  RID %s: %d draws (EID %d-%d)" % (
+                rt["resourceId"], rt["drawCount"], rt["firstEid"], rt["lastEid"]))
+
+
+def cmd_info(args: argparse.Namespace) -> None:
+    result = core.run_script("info", args.capture)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    if "error" in result:
+        print("[error] %s" % result["error"], file=sys.stderr)
+        sys.exit(1)
+
+    print("=== Capture Info ===")
+    for k, v in result.items():
+        print("  %s: %s" % (k, v))
+
+
+def cmd_capture(args: argparse.Namespace) -> None:
+    renderdoccmd = core.WORKSPACE_ROOT / "tools" / "renderdoc" / "renderdoccmd.exe"
+    if not renderdoccmd.is_file():
+        print("[error] renderdoccmd not found at %s" % renderdoccmd, file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [str(renderdoccmd), "capture"]
+    if args.output_file:
+        cmd.extend(["-c", args.output_file])
+    cmd.extend(["-w", args.exe])
+    cmd.extend(args.exe_args)
+
+    print("Launching capture: %s" % " ".join(cmd))
+    subprocess.run(cmd)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="renderdoctools",
@@ -235,6 +368,48 @@ def main() -> None:
     p_shd.add_argument("--json", action="store_true", help="Output raw JSON")
     p_shd.add_argument("--output", type=str, help="Write output to file")
     p_shd.set_defaults(func=cmd_shaders)
+
+    # mesh
+    p_mesh = sub.add_parser("mesh", help="Decode vertex/mesh data at a draw call")
+    p_mesh.add_argument("capture", help="Path to .rdc capture file")
+    p_mesh.add_argument("--event", type=int, required=True, help="Event ID")
+    p_mesh.add_argument("--post-vs", action="store_true", help="Show post-VS output instead of inputs")
+    p_mesh.add_argument("--indices", type=str, help="Vertex index range, e.g. 0-10")
+    p_mesh.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_mesh.add_argument("--output", type=str, help="Write output to file")
+    p_mesh.set_defaults(func=cmd_mesh)
+
+    # counters
+    p_cnt = sub.add_parser("counters", help="GPU performance counters")
+    p_cnt.add_argument("capture", help="Path to .rdc capture file")
+    p_cnt.add_argument("--fetch", type=str, help="Fetch specific counter by name")
+    p_cnt.add_argument("--zero-samples", action="store_true", help="Find draws with 0 samples passed")
+    p_cnt.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_cnt.add_argument("--output", type=str, help="Write output to file")
+    p_cnt.set_defaults(func=cmd_counters)
+
+    # analyze
+    p_ana = sub.add_parser("analyze", help="Capture-wide analysis and statistics")
+    p_ana.add_argument("capture", help="Path to .rdc capture file")
+    p_ana.add_argument("--summary", action="store_true", help="Overview statistics")
+    p_ana.add_argument("--biggest-draws", type=int, metavar="N", help="Top N draws by vertex count")
+    p_ana.add_argument("--render-targets", action="store_true", help="List unique render targets")
+    p_ana.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_ana.add_argument("--output", type=str, help="Write output to file")
+    p_ana.set_defaults(func=cmd_analyze)
+
+    # info
+    p_info = sub.add_parser("info", help="Show capture metadata")
+    p_info.add_argument("capture", help="Path to .rdc capture file")
+    p_info.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_info.set_defaults(func=cmd_info)
+
+    # capture
+    p_cap = sub.add_parser("capture", help="Capture a running or launched application")
+    p_cap.add_argument("exe", help="Executable to capture")
+    p_cap.add_argument("exe_args", nargs="*", help="Arguments to pass to executable")
+    p_cap.add_argument("--output", "-o", type=str, dest="output_file", help="Output capture filename template")
+    p_cap.set_defaults(func=cmd_capture)
 
     args = parser.parse_args()
 
