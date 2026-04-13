@@ -32,7 +32,7 @@ JDK_ADOPTIUM_URL = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/
 
 RENDERDOC_VERSION = "1.43"
 RENDERDOC_ZIP = "RenderDoc_DX9_Windows_x64.zip"
-RENDERDOC_URL = "https://github.com/Kim2091/renderdoc/releases/download/v1.43_dx9_2/RenderDoc_DX9_Windows_x64.zip"
+RENDERDOC_URL = "https://github.com/Kim2091/renderdoc/releases/download/v1.43_dx9/RenderDoc_DX9_Windows_x64.zip"
 RENDERDOC_DIR_NAME = "RenderDoc_DX9"
 
 
