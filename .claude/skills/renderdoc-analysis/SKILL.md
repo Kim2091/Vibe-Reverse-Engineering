@@ -14,15 +14,26 @@ All commands support `--json` for raw JSON and `--output FILE`.
 
 A capture (`.rdc`) is a snapshot of one frame's entire GPU command stream: every draw call, state change, resource binding, and buffer/texture content at that point in time.
 
-### How to capture
+### CLI capture (preferred)
+
+Launch a game with RenderDoc injection and capture — no GUI required:
 ```
-python -m renderdoctools capture <exe>           # launch + capture via renderdoccmd
-python -m renderdoctools open <rdc>              # open existing capture in GUI
+python -m renderdoctools capture <exe>                    # launch + capture
+python -m renderdoctools capture <exe> --output out.rdc   # specify output filename
+python -m renderdoctools capture <exe> -- --arg1 --arg2   # pass args to the game
 ```
 
-**Via GUI:** RenderDoc > File > Launch Application. Set executable + working dir. Hit Launch, press F12 (or Print Screen) in-game to trigger capture.
+This calls `renderdoccmd capture -w <exe>` under the hood. The game launches with RenderDoc hooked in. Press **F12** or **Print Screen** in-game to trigger the capture. The `.rdc` file is written to the working directory (or the `--output` path).
 
-**Via renderdoccmd:** `renderdoccmd capture --opt-hook-children <exe>`. Output `.rdc` written to working directory.
+**Use this as the default capture method.** The agent can run this directly — no need to walk the user through the GUI.
+
+### GUI capture (fallback)
+
+If CLI capture fails (e.g. game needs specific launch options the CLI doesn't support):
+```
+python -m renderdoctools open <rdc>    # open existing capture in GUI
+```
+Or launch RenderDoc GUI manually: File > Launch Application. Set executable + working dir. Hit Launch, press F12 in-game.
 
 ### Capture tips
 - Navigate to the exact game state first, then capture. The captured frame is whatever's rendering at trigger time.
@@ -30,9 +41,6 @@ python -m renderdoctools open <rdc>              # open existing capture in GUI
 - D3D11/D3D12/Vulkan/OpenGL/DX9 supported. DX9 requires a custom RenderDoc build with the D3D9 driver.
 - If the game crashes on inject, try `--opt-ref-all-resources` (slower but more compatible).
 - Capture files can be 100MB-1GB+. Each contains full texture/buffer data for that frame.
-
-### When to guide the user to capture
-If no `.rdc` exists, walk through: (1) what game state to be in, (2) launch method (GUI attach vs CLI), (3) how to trigger (F12), (4) where the `.rdc` file ends up.
 
 ## DX9 Captures
 
@@ -91,7 +99,7 @@ DX9 support requires a custom RenderDoc build with the D3D9 replay driver. When 
 | `debug-shader <rdc> --event EID --mode pixel --x X --y Y` | Debug pixel shader |
 | `debug-shader <rdc> --event EID --mode compute --group 0,0,0 --thread 0,0,0` | Debug compute |
 | `open <rdc>` | Launch RenderDoc GUI |
-| `capture <exe>` | Capture via renderdoccmd |
+| `capture <exe> [--output FILE] [-- EXE_ARGS]` | Launch game with RenderDoc injection, capture on F12 |
 
 ## Verification: Confirm Before You Dig
 

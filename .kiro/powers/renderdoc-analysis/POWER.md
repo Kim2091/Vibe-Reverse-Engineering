@@ -1,6 +1,9 @@
 ---
-name: 'renderdoc-analysis'
-description: 'RenderDoc GPU capture analysis. Use for .rdc files, draw call inspection, pipeline state, textures/shaders, mesh data, GPU counters.'
+name: "renderdoc-analysis"
+displayName: "RenderDoc Analysis"
+description: "RenderDoc GPU capture analysis. Use for .rdc files, draw call inspection, pipeline state, textures/shaders, mesh data, GPU counters."
+keywords: ["renderdoc", "rdc", "gpu", "capture", "draw-call", "pipeline", "textures", "shaders"]
+author: "workspace"
 ---
 
 # RenderDoc Analysis
@@ -41,6 +44,11 @@ D3D11/D3D12/Vulkan/OpenGL/DX9 supported. DX9 requires the custom RenderDoc build
 | `pick-pixel <rdc> --resource RID --x X --y Y` | Read pixel value |
 | `usage <rdc> --resource RID [--filter read\|write]` | Resource usage across events |
 | `debug-shader <rdc> --event EID --mode vertex\|pixel --vertex-index N` | Debug shader execution |
+| `messages <rdc> [--severity high]` | API debug/validation messages |
+| `tex-stats <rdc> --resource RID [--histogram]` | Min/max RGBA, value distribution |
+| `tex-data <rdc> --resource RID [--output-file F]` | Raw texture bytes |
+| `frame-info <rdc>` | Frame stats: draws, dispatches, binds |
+| `custom-shader <rdc> --event EID --source F --output F` | Apply custom viz shader |
 | `capture <exe> [--output FILE] [-- EXE_ARGS]` | Launch game with RenderDoc injection, capture on F12 |
 | `open <rdc>` | Launch RenderDoc GUI |
 
@@ -63,6 +71,30 @@ Always confirm you're looking at the right thing:
 1. `analyze --render-targets` — list all RTs
 2. Per RT: `usage --resource <RID>` — writes = pass boundaries, reads = consumers
 3. Dump textures at key EIDs to label passes (shadow, GBuffer, lighting, post)
+
+## Interpreting Shader Debug Output
+
+`debug-shader` produces inputs, constant blocks, per-step variable changes. Look for:
+- **NaN/Inf**: division by zero or bad input — trace the step
+- **Unexpected zeros**: wrong binding or uninitialized resource
+- **Bad transforms**: check `finalState` output position + constant blocks
+- **Shader discards**: `shaderDiscarded: true` in pixel history — debug the discard condition
+
+## When Data Looks Wrong
+
+1. **Correct EID?** All queries reflect state at the queried EID
+2. **Correct resource?** Resource IDs are per-capture — re-discover with `textures`
+3. **Correct format?** `pick-pixel` with wrong `--comp-type` reads garbage
+4. **Initialized?** All zeros = not yet written. `usage --filter write` finds first write
+5. **Mip/slice?** Querying mip 0 of a texture only written at mip 1+ returns stale data
+
+## Workflow Recipes
+
+**Quick overview**: `analyze --summary` > `events --draws-only` > `analyze --biggest-draws 10`
+
+**Investigate draw**: `pipeline --event EID` > `textures --event EID --save-all ./dump` > `shaders --event EID --cbuffers`
+
+**Full frame audit**: `analyze --render-targets` > `messages --severity high` > `counters --zero-samples`
 
 ## When to Use GUI
 
