@@ -24,7 +24,7 @@ def find_renderdoc() -> Path:
     """Locate bundled qrenderdoc.exe. Raises FileNotFoundError if missing."""
     # Search for RenderDoc in tools/ — supports both "renderdoc" and versioned names
     tools_dir = WORKSPACE_ROOT / "tools"
-    for name in ["renderdoc", "RenderDoc_1.43_64"]:
+    for name in ["renderdoc", "RenderDoc_DX9", "RenderDoc_1.43_64"]:
         qrd = tools_dir / name / "qrenderdoc.exe"
         if qrd.is_file():
             return qrd
@@ -37,8 +37,8 @@ def find_renderdoc() -> Path:
                     return qrd
     raise FileNotFoundError(
         "RenderDoc not found in %s\n"
-        "Download RenderDoc_1.43_64.zip from renderdoc.org and "
-        "extract to tools/" % tools_dir
+        "Run 'python verify_install.py' to auto-install, or download from "
+        "https://github.com/Kim2091/renderdoc/releases and extract to tools/" % tools_dir
     )
 
 
@@ -52,7 +52,9 @@ def run_script(
     qrd = find_renderdoc()
     config = config or {}
 
-    with tempfile.TemporaryDirectory(prefix="rdtools_") as tmpdir:
+    local_tmp = WORKSPACE_ROOT / "tmp"
+    local_tmp.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="rdtools_", dir=str(local_tmp)) as tmpdir:
         tmpdir = Path(tmpdir)
         output_path = tmpdir / "output.json"
         config_path = tmpdir / "config.json"

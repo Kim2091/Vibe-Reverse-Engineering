@@ -31,9 +31,9 @@ JDK_VERSION = "21"
 JDK_ADOPTIUM_URL = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse"
 
 RENDERDOC_VERSION = "1.43"
-RENDERDOC_ZIP = f"RenderDoc_{RENDERDOC_VERSION}_64.zip"
-RENDERDOC_URL = f"https://renderdoc.org/stable/{RENDERDOC_VERSION}/{RENDERDOC_ZIP}"
-RENDERDOC_DIR_NAME = f"RenderDoc_{RENDERDOC_VERSION}_64"
+RENDERDOC_ZIP = "RenderDoc_DX9_Windows_x64.zip"
+RENDERDOC_URL = "https://github.com/Kim2091/renderdoc/releases/download/v1.43_dx9_2/RenderDoc_DX9_Windows_x64.zip"
+RENDERDOC_DIR_NAME = "RenderDoc_DX9"
 
 
 def record(name: str, status: str, detail: str = ""):
