@@ -7,11 +7,13 @@ Usage:
 
 import importlib
 import io
+import json
 import os
 import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,6 +37,7 @@ RENDERDOC_VERSION = "1.43"
 RENDERDOC_URL = "https://github.com/Kim2091/renderdoc/releases/download/v1.43_dx9_v2/RenderDoc_DX9_Windows_x86_x64.zip"
 RENDERDOC_ZIP = Path(urlparse(RENDERDOC_URL).path).name
 RENDERDOC_DIR_NAME = "RenderDoc_DX9"
+RENDERDOC_METADATA_FILE = ".vibe-renderdoc-install.json"
 
 
 def record(name: str, status: str, detail: str = ""):
@@ -187,12 +190,86 @@ def _find_renderdoc_dir() -> Path | None:
     return None
 
 
+def _renderdoc_expected_metadata() -> dict[str, str]:
+    return {
+        "version": RENDERDOC_VERSION,
+        "url": RENDERDOC_URL,
+        "archive": RENDERDOC_ZIP,
+    }
+
+
+def _renderdoc_metadata_path(renderdoc_dir: Path) -> Path:
+    return renderdoc_dir / RENDERDOC_METADATA_FILE
+
+
+def _read_renderdoc_metadata(renderdoc_dir: Path) -> dict[str, str] | None:
+    metadata_path = _renderdoc_metadata_path(renderdoc_dir)
+    if not metadata_path.is_file():
+        return None
+
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
+def _write_renderdoc_metadata(renderdoc_dir: Path):
+    metadata = _renderdoc_expected_metadata()
+    metadata_path = _renderdoc_metadata_path(renderdoc_dir)
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+
+def _get_renderdoc_update_reason(renderdoc_dir: Path) -> str | None:
+    metadata = _read_renderdoc_metadata(renderdoc_dir)
+    if metadata is None:
+        return "installed package version is unknown"
+
+    expected = _renderdoc_expected_metadata()
+    installed_version = metadata.get("version")
+    if installed_version != expected["version"]:
+        return f"installed version {installed_version or 'unknown'} != required {expected['version']}"
+
+    if metadata.get("url") != expected["url"]:
+        return "pinned download URL changed"
+
+    return None
+
+
+def _next_backup_path(path: Path) -> Path:
+    backup_path = path.with_name(f"{path.name}.backup")
+    index = 1
+    while backup_path.exists():
+        backup_path = path.with_name(f"{path.name}.backup.{index}")
+        index += 1
+    return backup_path
+
+
+def _backup_directory(path: Path) -> Path:
+    backup_path = _next_backup_path(path)
+    shutil.copytree(path, backup_path)
+    return backup_path
+
+
+def _overlay_tree(src: Path, dst: Path):
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
 def check_renderdoc() -> bool:
     """Check for RenderDoc installation. Returns True if found."""
     rd = _find_renderdoc_dir()
     if rd:
-        record("renderdoc", PASS, str(rd))
-        return True
+        update_reason = _get_renderdoc_update_reason(rd)
+        if update_reason is None:
+            record("renderdoc", PASS, f"{rd} (v{RENDERDOC_VERSION})")
+            return True
+        record(
+            "renderdoc",
+            WARN,
+            f"{rd} needs reinstall ({update_reason}) -- run: python verify_install.py --setup",
+        )
+        return False
     record("renderdoc", WARN,
            "RenderDoc not found in tools/ -- "
            "run: python verify_install.py --setup")
@@ -342,8 +419,11 @@ def setup_renderdoc():
     """Download and extract RenderDoc to tools/."""
     existing = _find_renderdoc_dir()
     if existing:
-        print(f"  RenderDoc already at {existing}")
-        return True
+        update_reason = _get_renderdoc_update_reason(existing)
+        if update_reason is None:
+            print(f"  RenderDoc already at {existing} (v{RENDERDOC_VERSION})")
+            return True
+        print(f"  RenderDoc at {existing} needs reinstall: {update_reason}")
 
     print(f"\n  Downloading RenderDoc {RENDERDOC_VERSION} (~23 MB)...")
     try:
@@ -352,27 +432,31 @@ def setup_renderdoc():
         zip_path = TOOLS_DIR / RENDERDOC_ZIP
         zip_path.write_bytes(data)
         print("  Extracting...")
-        with zipfile.ZipFile(zip_path) as zf:
-            members = [Path(name) for name in zf.namelist() if name and not name.endswith("/")]
-            top_levels = {member.parts[0] for member in members if member.parts}
+        rd_dir = TOOLS_DIR / RENDERDOC_DIR_NAME
+        with tempfile.TemporaryDirectory(prefix="renderdoc-install-", dir=TOOLS_DIR) as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(temp_dir)
+                members = [Path(name) for name in zf.namelist() if name and not name.endswith("/")]
+                top_levels = {member.parts[0] for member in members if member.parts}
 
             # Support both archive layouts:
             # 1. A wrapped folder like RenderDoc_DX9/qrenderdoc.exe
             # 2. A flat runtime zip with qrenderdoc.exe and x86/ at archive root
             if "qrenderdoc.exe" in top_levels or len(top_levels) != 1:
-                rd_dir = TOOLS_DIR / RENDERDOC_DIR_NAME
-                rd_dir.mkdir(parents=True, exist_ok=True)
-                zf.extractall(rd_dir)
+                extracted_root = temp_dir
             else:
-                extracted_root = TOOLS_DIR / next(iter(top_levels))
-                zf.extractall(TOOLS_DIR)
-                rd_dir = TOOLS_DIR / RENDERDOC_DIR_NAME
-                if extracted_root != rd_dir:
-                    if rd_dir.exists():
-                        shutil.rmtree(rd_dir)
-                    extracted_root.rename(rd_dir)
+                extracted_root = temp_dir / next(iter(top_levels))
+
+            if existing and existing.is_dir():
+                backup_dir = _backup_directory(existing)
+                print(f"  Backed up existing RenderDoc to {backup_dir}")
+
+            _overlay_tree(extracted_root, rd_dir)
+
         zip_path.unlink()
-        rd_dir = _find_renderdoc_dir() or (TOOLS_DIR / RENDERDOC_DIR_NAME)
+        _write_renderdoc_metadata(rd_dir)
+        rd_dir = _find_renderdoc_dir() or rd_dir
         if rd_dir.is_dir() and (rd_dir / "qrenderdoc.exe").exists():
             record("setup:renderdoc", PASS, f"Installed to {rd_dir}")
             return True
